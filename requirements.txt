@@ -1,0 +1,7 @@
+kokoro-onnx==0.4.7
+onnxruntime-gpu==1.24.4
+soundfile>=0.12.1
+numpy>=1.26
+requests>=2.32
+lameenc>=1.8.1
+mutagen>=1.47
