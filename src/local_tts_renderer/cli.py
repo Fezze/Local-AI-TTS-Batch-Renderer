@@ -1143,6 +1143,17 @@ class OutputPartWriter:
         self.start_chunk: int | None = None
         self.end_chunk: int | None = None
         self.samples_written = 0
+        print(
+            json.dumps(
+                {
+                    "part_open": True,
+                    "part": self.part_index,
+                    "group": self.group_name,
+                    "mp3_path": str(self.mp3_path),
+                }
+            ),
+            flush=True,
+        )
 
     def write_audio(self, audio: np.ndarray) -> None:
         mono_audio = np.asarray(audio, dtype=np.float32)
@@ -1182,7 +1193,7 @@ class OutputPartWriter:
             album_title = get_group_leaf_title(self.group_name) if self.group_name else self.audio_metadata.source_title
             track_number = extract_track_number(self.mp3_path.stem, self.part_index)
             write_mp3_tags(self.mp3_path, final_title, track_number, self.audio_metadata, album_title=album_title)
-        return {
+        part_payload = {
             "part": self.part_index,
             "wav_path": None if self.mp3_only else str(self.wav_path),
             "mp3_path": str(self.mp3_path),
@@ -1192,98 +1203,111 @@ class OutputPartWriter:
             "start_chunk": self.start_chunk,
             "end_chunk": self.end_chunk,
         }
+        print(
+            json.dumps(
+                {
+                    "part_close": True,
+                    "part": self.part_index,
+                    "group": self.group_name,
+                    "start_chunk": self.start_chunk,
+                    "end_chunk": self.end_chunk,
+                    "duration_seconds": part_payload["duration_seconds"],
+                    "mp3_path": str(self.mp3_path),
+                }
+            ),
+            flush=True,
+        )
+        return part_payload
 
 
-def render_chapter_audio(
+def render_chunk_audio(
     kokoro,
+    chunk: Chunk,
     chapter: Chapter,
     chapter_index: int,
     total_chapters: int,
-    chunk_start_index: int,
+    position_in_chapter: int,
+    total_chapter_chunks: int,
     voice: str,
     lang: str,
     trim_mode: str,
     speed: float,
-    max_chars: int,
     silence_ms: int,
     keep_chunks: bool,
     chunk_dir: Path,
     progress_state: dict,
-) -> tuple[list[np.ndarray], list[dict], int, int, int]:
-    chunks = chunk_section(chapter.title, chapter.text, max_chars=max_chars, start_index=chunk_start_index)
-    if not chunks:
-        return [], [], chunk_start_index, 0, 0
+    expected_sample_rate: int | None,
+) -> tuple[np.ndarray, int, dict]:
+    progress_state["completed_chunks"] += 1
+    completed_chunks = progress_state["completed_chunks"]
+    total_chunks = progress_state["total_chunks"]
+    chunk_started_at = time.time()
 
-    sample_rate: int | None = None
-    chapter_segments: list[np.ndarray] = []
-    manifest_chunks: list[dict] = []
-    silence = None
-    print(
-        json.dumps(
-            {
-                "chapter_start": True,
-                "chapter_index": chapter_index,
-                "chapter_title": chapter.title,
-                "chunk_count": len(chunks),
-            }
-        ),
-        flush=True,
-    )
+    audio_parts, current_rate = create_audio_with_retry(kokoro=kokoro, text=chunk.text, voice=voice, speed=speed, lang=lang, trim_mode=trim_mode)
+    audio = np.concatenate(audio_parts)
+    if expected_sample_rate is not None and current_rate != expected_sample_rate:
+        raise RuntimeError(f"Sample rate changed from {expected_sample_rate} to {current_rate}.")
 
-    for position_in_chapter, chunk in enumerate(chunks, start=1):
-        progress_state["completed_chunks"] += 1
-        completed_chunks = progress_state["completed_chunks"]
-        total_chunks = progress_state["total_chunks"]
-        chunk_started_at = time.time()
+    if keep_chunks:
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        chunk_path = chunk_dir / f"{chunk.index:04d}.wav"
+        sf.write(chunk_path, audio, current_rate)
 
-        audio_parts, current_rate = create_audio_with_retry(kokoro=kokoro, text=chunk.text, voice=voice, speed=speed, lang=lang, trim_mode=trim_mode)
-        audio = np.concatenate(audio_parts)
+    if silence_ms > 0 and position_in_chapter < total_chapter_chunks:
+        silence = np.zeros(int(current_rate * silence_ms / 1000), dtype=np.float32)
+        audio = np.concatenate([audio, silence])
 
-        if sample_rate is None:
-            sample_rate = current_rate
-            silence = np.zeros(int(sample_rate * silence_ms / 1000), dtype=np.float32) if silence_ms > 0 else None
-        elif current_rate != sample_rate:
-            raise RuntimeError(f"Sample rate changed from {sample_rate} to {current_rate}.")
+    manifest_chunk = {
+        "index": chunk.index,
+        "heading": chunk.heading,
+        "chapter": chapter.title,
+        "chars": len(chunk.text),
+        "text": chunk.text,
+    }
 
-        if keep_chunks:
-            chunk_dir.mkdir(parents=True, exist_ok=True)
-            chunk_path = chunk_dir / f"{chunk.index:04d}.wav"
-            sf.write(chunk_path, audio, sample_rate)
-
-        chapter_segments.append(audio)
-        if silence is not None and position_in_chapter < len(chunks):
-            chapter_segments.append(silence.copy())
-
-        manifest_chunks.append(
-            {
-                "index": chunk.index,
-                "heading": chunk.heading,
-                "chapter": chapter.title,
-                "chars": len(chunk.text),
-                "text": chunk.text,
-            }
+    elapsed = progress_state["elapsed_offset"] + (time.time() - progress_state["started_at"])
+    display_completed = min(completed_chunks, total_chunks) if total_chunks else completed_chunks
+    avg_per_chunk = elapsed / completed_chunks if completed_chunks else 0.0
+    eta_seconds = avg_per_chunk * max(total_chunks - display_completed, 0)
+    chunk_elapsed = time.time() - chunk_started_at
+    percent = (display_completed / total_chunks) * 100 if total_chunks else 100.0
+    should_log = total_chunks <= 3 or position_in_chapter == 1 or position_in_chapter == total_chapter_chunks or chunk_elapsed >= 1.0
+    if should_log:
+        print(
+            f"[{display_completed}/{total_chunks}] {percent:5.1f}% "
+            f"chapter={chapter_index}/{total_chapters} chunk={chunk.index} chars={len(chunk.text)} "
+            f"chunk_time={chunk_elapsed:.1f}s elapsed={elapsed:.1f}s eta={eta_seconds:.1f}s",
+            flush=True,
         )
+    return audio, current_rate, manifest_chunk
 
-        elapsed = progress_state["elapsed_offset"] + (time.time() - progress_state["started_at"])
-        display_completed = min(completed_chunks, total_chunks) if total_chunks else completed_chunks
-        avg_per_chunk = elapsed / completed_chunks if completed_chunks else 0.0
-        eta_seconds = avg_per_chunk * max(total_chunks - display_completed, 0)
-        chunk_elapsed = time.time() - chunk_started_at
-        percent = (display_completed / total_chunks) * 100 if total_chunks else 100.0
-        should_log = total_chunks <= 3 or position_in_chapter == 1 or position_in_chapter == len(chunks) or chunk_elapsed >= 1.0
-        if should_log:
-            print(
-                f"[{display_completed}/{total_chunks}] {percent:5.1f}% "
-                f"chapter={chapter_index}/{total_chapters} chunk={chunk.index} chars={len(chunk.text)} "
-                f"chunk_time={chunk_elapsed:.1f}s elapsed={elapsed:.1f}s eta={eta_seconds:.1f}s",
-                flush=True,
-            )
 
-    if sample_rate is None:
-        raise RuntimeError(f"No audio rendered for chapter: {chapter.title}")
-
-    chapter_samples = sum(len(segment) for segment in chapter_segments)
-    return chapter_segments, manifest_chunks, chunks[-1].index + 1, chapter_samples, sample_rate
+def save_safe_checkpoint(
+    checkpoint_path: Path,
+    next_chapter_index: int,
+    next_chunk_index: int,
+    completed_chunks: int,
+    elapsed_seconds: float,
+    sample_rate: int | None,
+    output_parts: list[dict],
+    manifest_chunks: list[dict],
+    next_group: str | None,
+    next_part_index: int,
+) -> None:
+    save_resume_state(
+        checkpoint_path,
+        {
+            "next_chapter_index": next_chapter_index,
+            "next_chunk_index": next_chunk_index,
+            "completed_chunks": completed_chunks,
+            "elapsed_seconds": elapsed_seconds,
+            "sample_rate": sample_rate,
+            "output_parts": output_parts,
+            "manifest_chunks": manifest_chunks,
+            "next_group": next_group,
+            "next_part_index": next_part_index,
+        },
+    )
 
 
 def render_audio(
@@ -1324,10 +1348,11 @@ def render_audio(
         next_start_index += chunk_count
     total_chunks = next_start_index - 1
     normalized_next_chapter_index = resume_state.get("next_chapter_index", 1) if resume_state else 1
-    normalized_next_chunk_index = chapter_start_indices[normalized_next_chapter_index - 1] if chapters and 1 <= normalized_next_chapter_index <= len(chapters) else 1
-    normalized_completed_chunks = max(normalized_next_chunk_index - 1, 0)
+    default_next_chunk_index = chapter_start_indices[normalized_next_chapter_index - 1] if chapters and 1 <= normalized_next_chapter_index <= len(chapters) else 1
+    normalized_next_chunk_index = resume_state.get("next_chunk_index", default_next_chunk_index) if resume_state else 1
+    normalized_completed_chunks = int(resume_state.get("completed_chunks", max(normalized_next_chunk_index - 1, 0))) if resume_state else 0
     progress_state = {
-        "completed_chunks": min(normalized_completed_chunks if resume_state else 0, total_chunks),
+        "completed_chunks": min(normalized_completed_chunks, total_chunks),
         "total_chunks": total_chunks,
         "started_at": time.time(),
         "elapsed_offset": (resume_state.get("elapsed_seconds") or 0.0) if resume_state else 0.0,
@@ -1362,6 +1387,14 @@ def render_audio(
         for chapter_index, chapter in enumerate(chapters, start=1):
             if chapter_index < next_chapter_index:
                 continue
+            chapter_start_index = chapter_start_indices[chapter_index - 1]
+            chapter_end_index = chapter_start_index + chapter_chunk_counts[chapter_index - 1] - 1
+            chapter_chunks = chunk_section(chapter.title, chapter.text, max_chars=max_chars, start_index=chapter_start_index)
+            chapter_chunks = [chunk for chunk in chapter_chunks if chunk.index >= next_chunk_index]
+            if not chapter_chunks:
+                next_chunk_index = chapter_end_index + 1
+                next_chapter_index = chapter_index + 1
+                continue
             print(
                 json.dumps(
                     {
@@ -1375,88 +1408,100 @@ def render_audio(
             )
             progress_state["chapter_index"] = chapter_index
             progress_state["chapter_title"] = chapter.title
-            chapter_segments, chapter_manifest_chunks, next_chunk_index, chapter_samples, chapter_sample_rate = render_chapter_audio(
-                kokoro=kokoro,
-                chapter=chapter,
-                chapter_index=chapter_index,
-                total_chapters=total_chapters,
-                chunk_start_index=next_chunk_index,
-                voice=voice,
-                lang=lang,
-                trim_mode=trim_mode,
-                speed=speed,
-                max_chars=max_chars,
-                silence_ms=silence_ms,
-                keep_chunks=keep_chunks,
-                chunk_dir=chunk_dir,
-                progress_state=progress_state,
-            )
-            if not chapter_segments:
-                continue
-
-            manifest_chunks.extend(chapter_manifest_chunks)
-            chapter_chunk_count = len(chapter_manifest_chunks)
-            chapter_resume_chunk_index = chapter_manifest_chunks[0]["index"] if chapter_manifest_chunks else next_chunk_index
-            if sample_rate is None:
-                sample_rate = chapter_sample_rate
-                max_part_samples = max(1, int(sample_rate * max_part_minutes * 60))
             if grouped_output and chapter.group != current_group:
                 if current_writer is not None:
                     output_parts.append(current_writer.close())
-                    save_resume_state(
+                    save_safe_checkpoint(
                         checkpoint_path,
-                        {
-                            "next_chapter_index": chapter_index,
-                            "next_chunk_index": chapter_resume_chunk_index,
-                            "completed_chunks": progress_state["completed_chunks"] - chapter_chunk_count,
-                            "elapsed_seconds": progress_state["elapsed_offset"] + (time.time() - progress_state["started_at"]),
-                            "sample_rate": sample_rate,
-                            "output_parts": output_parts,
-                            "manifest_chunks": manifest_chunks[:-chapter_chunk_count] if chapter_chunk_count else manifest_chunks,
-                            "next_group": chapter.group,
-                            "next_part_index": 1,
-                        },
+                        next_chapter_index=chapter_index,
+                        next_chunk_index=chapter_chunks[0].index,
+                        completed_chunks=progress_state["completed_chunks"],
+                        elapsed_seconds=progress_state["elapsed_offset"] + (time.time() - progress_state["started_at"]),
+                        sample_rate=sample_rate,
+                        output_parts=output_parts,
+                        manifest_chunks=manifest_chunks,
+                        next_group=chapter.group,
+                        next_part_index=1,
                     )
                 current_group = chapter.group
                 part_index = 1
-                current_output_root = output_root / group_dir_map.get(chapter.group or "", Path(slugify(chapter.group or "group")))
-                current_writer = OutputPartWriter(current_output_root, base_output_dir, part_index, multi_part, sample_rate, force, group_name=current_group, audio_metadata=audio_metadata, mp3_only=mp3_only, final_stem_override=final_stem_override)
-            if current_writer is None:
-                current_output_root = output_root
-                if grouped_output and chapter.group:
-                    current_output_root = output_root / group_dir_map.get(chapter.group, Path(slugify(chapter.group)))
-                current_writer = OutputPartWriter(current_output_root, base_output_dir, part_index, multi_part, sample_rate, force, group_name=chapter.group, audio_metadata=audio_metadata, mp3_only=mp3_only, final_stem_override=final_stem_override)
-
-            if current_writer.samples_written > 0 and max_part_samples is not None and current_writer.samples_written + chapter_samples > max_part_samples:
-                output_parts.append(current_writer.close())
-                part_index += 1
-                save_resume_state(
-                    checkpoint_path,
+                current_writer = None
+            print(
+                json.dumps(
                     {
-                        "next_chapter_index": chapter_index,
-                        "next_chunk_index": chapter_resume_chunk_index,
-                        "completed_chunks": progress_state["completed_chunks"] - chapter_chunk_count,
-                        "elapsed_seconds": progress_state["elapsed_offset"] + (time.time() - progress_state["started_at"]),
-                        "sample_rate": sample_rate,
-                        "output_parts": output_parts,
-                        "manifest_chunks": manifest_chunks[:-chapter_chunk_count] if chapter_chunk_count else manifest_chunks,
-                        "next_group": chapter.group,
-                        "next_part_index": part_index,
-                    },
+                        "chapter_start": True,
+                        "chapter_index": chapter_index,
+                        "chapter_title": chapter.title,
+                        "chunk_count": len(chapter_chunks),
+                    }
+                ),
+                flush=True,
+            )
+            for position_in_chapter, chunk in enumerate(chapter_chunks, start=1):
+                audio, current_rate, manifest_chunk = render_chunk_audio(
+                    kokoro=kokoro,
+                    chunk=chunk,
+                    chapter=chapter,
+                    chapter_index=chapter_index,
+                    total_chapters=total_chapters,
+                    position_in_chapter=position_in_chapter,
+                    total_chapter_chunks=len(chapter_chunks),
+                    voice=voice,
+                    lang=lang,
+                    trim_mode=trim_mode,
+                    speed=speed,
+                    silence_ms=silence_ms,
+                    keep_chunks=keep_chunks,
+                    chunk_dir=chunk_dir,
+                    progress_state=progress_state,
+                    expected_sample_rate=sample_rate,
                 )
-                current_output_root = output_root
-                if grouped_output and chapter.group:
-                    current_output_root = output_root / group_dir_map.get(chapter.group, Path(slugify(chapter.group)))
-                current_writer = OutputPartWriter(current_output_root, base_output_dir, part_index, multi_part, sample_rate, force, group_name=chapter.group, audio_metadata=audio_metadata, mp3_only=mp3_only)
+                if sample_rate is None:
+                    sample_rate = current_rate
+                    max_part_samples = max(1, int(sample_rate * max_part_minutes * 60))
+                if current_writer is None:
+                    current_output_root = output_root
+                    if grouped_output and chapter.group:
+                        current_output_root = output_root / group_dir_map.get(chapter.group, Path(slugify(chapter.group)))
+                    current_writer = OutputPartWriter(
+                        current_output_root,
+                        base_output_dir,
+                        part_index,
+                        multi_part,
+                        sample_rate,
+                        force,
+                        group_name=chapter.group,
+                        audio_metadata=audio_metadata,
+                        mp3_only=mp3_only,
+                        final_stem_override=final_stem_override,
+                    )
+                if current_writer.start_chunk is None:
+                    current_writer.start_chunk = chunk.index
+                current_writer.end_chunk = chunk.index
+                if not current_writer.chapter_titles or current_writer.chapter_titles[-1] != chapter.title:
+                    current_writer.chapter_titles.append(chapter.title)
+                current_writer.write_audio(audio)
+                manifest_chunks.append(manifest_chunk)
+                next_chunk_index = chunk.index + 1
 
-            if current_writer.start_chunk is None and chapter_manifest_chunks:
-                current_writer.start_chunk = chapter_manifest_chunks[0]["index"]
-            if chapter_manifest_chunks:
-                current_writer.end_chunk = chapter_manifest_chunks[-1]["index"]
-            current_writer.chapter_titles.append(chapter.title)
+                if max_part_samples is not None and current_writer.samples_written >= max_part_samples:
+                    output_parts.append(current_writer.close())
+                    part_index += 1
+                    save_safe_checkpoint(
+                        checkpoint_path,
+                        next_chapter_index=chapter_index if next_chunk_index <= chapter_end_index else chapter_index + 1,
+                        next_chunk_index=next_chunk_index,
+                        completed_chunks=progress_state["completed_chunks"],
+                        elapsed_seconds=progress_state["elapsed_offset"] + (time.time() - progress_state["started_at"]),
+                        sample_rate=sample_rate,
+                        output_parts=output_parts,
+                        manifest_chunks=manifest_chunks,
+                        next_group=chapter.group,
+                        next_part_index=part_index,
+                    )
+                    current_writer = None
 
-            for segment in chapter_segments:
-                current_writer.write_audio(segment)
+            next_chapter_index = chapter_index + 1
 
         if current_writer is not None:
             output_parts.append(current_writer.close())

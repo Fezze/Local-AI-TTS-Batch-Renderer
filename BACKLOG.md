@@ -19,6 +19,7 @@
 - [x] P0: Odseparować planowanie batch od ciężkiego `cli` (lekki parser `input_parsers` + szybka estymacja chunków bez importu `chunking/cli`).
 - [x] P0: Usunąć top-level import `onnxruntime`/`kokoro_onnx` z `cli` (lazy bootstrap + logi etapów), żeby worker nie wieszał się przed pierwszym logiem.
 - [x] P0: Dodać skrypt recovery po przerwanym runie (kill wiszących workerów repo + cleanup temp/resume).
+- [x] P0: Przepisać renderowanie chapterów na streaming chunk->writer + checkpoint po `part_close` (resume od ostatniego bezpiecznie domkniętego parta).
 - [ ] P1: Dodać opcjonalny tryb `safe` (np. `--safe-workers`) ograniczający obciążenie na słabszych maszynach bez zmiany domyślnego `2x GPU + 1x CPU`.
 - [ ] P0: Wydzielić logikę z `src/local_tts_renderer/cli.py` do mniejszych modułów bez zmiany zachowania runtime.
 - [ ] P0: Rozszerzyć testy snapshot/regression dla manifestów i kolejności chunków/rozdziałów na fixture `md` i `epub`.
