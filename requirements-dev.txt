@@ -1,1 +1,2 @@
 ﻿pytest>=8.2
+pytest-cov>=7.0

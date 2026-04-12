@@ -6,3 +6,4 @@
 - Każda analiza i każdy plan MUSI zacząć się od przeczytania `BACKLOG.md`.
 - Po każdej rekomendacji lub większej zmianie backlog MUSI zostać zaktualizowany (priorytetowo od najważniejszego do najmniej ważnego).
 - Nie zmieniaj logiki renderowania bez testu regresji lub snapshotu zachowania.
+- Pliki kodu powyżej 500 linii MUSZĄ zostać rozbite na mniejsze moduły.

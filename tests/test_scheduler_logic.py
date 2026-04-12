@@ -2,9 +2,13 @@ from local_tts_renderer.scheduler import (
     ChapterJob,
     WorkerConfig,
     WorkerStatus,
+    build_worker_command,
     choose_worker_max_chars,
     cpu_allowed_chunk_budget,
+    parse_args,
+    resolve_worker_silence_timeout,
     select_next_job,
+    update_worker_phase,
 )
 
 
@@ -53,3 +57,101 @@ def test_max_chars_shrinks_on_retry_for_gpu() -> None:
     first = choose_worker_max_chars(WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider"), job_first, Args())
     retry = choose_worker_max_chars(WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider"), job_retry, Args())
     assert retry < first
+
+
+def test_worker_command_includes_max_parts_per_run_flag() -> None:
+    from argparse import Namespace
+    from pathlib import Path
+
+    args = Namespace(
+        output_dir="out",
+        voice="voice_a",
+        speed=1.0,
+        max_part_minutes=30.0,
+        model_dir="models",
+        silence_ms=250,
+        trim_mode="off",
+        heartbeat_seconds=30.0,
+        warmup_text="Warmup run.",
+        force=False,
+        keep_chunks=False,
+        mp3_only=True,
+        max_parts_per_run=1,
+    )
+    job = _job(4, "Section Alpha", 12000, 12)
+    command = build_worker_command(
+        python_exe=Path("python"),
+        script_path=Path("md_to_audio.py"),
+        args=args,
+        source_path=Path("doc.epub"),
+        job=job,
+        worker_max_chars=900,
+        cache_path=Path("cache.json"),
+    )
+    assert "--max-parts-per-run" in command
+    assert "1" in command
+
+
+def test_worker_command_omits_max_parts_per_run_when_disabled() -> None:
+    from argparse import Namespace
+    from pathlib import Path
+
+    args = Namespace(
+        output_dir="out",
+        voice="voice_a",
+        speed=1.0,
+        max_part_minutes=30.0,
+        model_dir="models",
+        silence_ms=250,
+        trim_mode="off",
+        heartbeat_seconds=30.0,
+        warmup_text="Warmup run.",
+        force=False,
+        keep_chunks=False,
+        mp3_only=True,
+        max_parts_per_run=0,
+    )
+    job = _job(4, "Section Alpha", 12000, 12)
+    command = build_worker_command(
+        python_exe=Path("python"),
+        script_path=Path("md_to_audio.py"),
+        args=args,
+        source_path=Path("doc.epub"),
+        job=job,
+        worker_max_chars=900,
+        cache_path=None,
+    )
+    assert "--max-parts-per-run" not in command
+
+
+def test_update_worker_phase_detects_bootstrap_and_render() -> None:
+    phase = "spawn"
+    phase = update_worker_phase(phase, "[run:bootstrap] loading onnxruntime...")
+    assert phase == "bootstrap_onnxruntime"
+    phase = update_worker_phase(phase, "[run:warmup] start")
+    assert phase == "warmup"
+    phase = update_worker_phase(phase, "[run:warmup] done elapsed=0.4s")
+    assert phase == "chapter_load"
+    phase = update_worker_phase(phase, "[4/10] 40.0% chapter=1/1 chunk=4 chars=500 chunk_time=2.1s elapsed=10.0s eta=15.0s")
+    assert phase == "render"
+
+
+def test_resolve_worker_silence_timeout_uses_bootstrap_limit() -> None:
+    from argparse import Namespace
+
+    args = Namespace(worker_silence_timeout_seconds=180.0, bootstrap_silence_timeout_seconds=45.0)
+    assert resolve_worker_silence_timeout(args, "bootstrap_session") == 45.0
+    assert resolve_worker_silence_timeout(args, "warmup") == 45.0
+    assert resolve_worker_silence_timeout(args, "render") == 180.0
+
+
+def test_parse_args_disables_gpu_bootstrap_serialization_when_requested(monkeypatch) -> None:
+    import sys
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_tts_batch.py", "--input", "book.epub", "--no-serialize-gpu-bootstrap"],
+    )
+    args = parse_args()
+    assert args.serialize_gpu_bootstrap is False

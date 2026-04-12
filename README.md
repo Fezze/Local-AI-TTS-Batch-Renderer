@@ -12,6 +12,12 @@ Local renderer for Markdown/EPUB to speech using ONNX Runtime.
 
 ## Quick Start
 
+Preflight check:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\doctor.py --output-dir ".\out" --model-dir ".\models"
+```
+
 ### Windows
 
 ```powershell
@@ -25,6 +31,12 @@ Batch:
 .\.venv\Scripts\python.exe .\run_tts_batch.py --input ".\books" --output-dir ".\out"
 ```
 
+Skip preflight in start script:
+
+```powershell
+scripts\start.ps1 -SkipDoctor --input ".\book.epub" --output-dir ".\out"
+```
+
 ### Linux
 
 ```bash
@@ -36,6 +48,12 @@ Batch:
 
 ```bash
 ./.venv/bin/python ./run_tts_batch.py --input ./books --output-dir ./out
+```
+
+Skip preflight in start script:
+
+```bash
+SKIP_DOCTOR=1 bash scripts/start.sh --input ./book.epub --output-dir ./out
 ```
 
 ## Provider Configuration
@@ -77,3 +95,9 @@ python run_tts_batch.py --input "books" --gpu-workers 2 --cpu-workers 1 --provid
 
 - Current default model pipeline is Kokoro ONNX.
 - Planned support for additional models and formats is tracked in `BACKLOG.md`.
+
+## Tests and Coverage
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest --cov=src/local_tts_renderer --cov-report=term-missing -q
+```
