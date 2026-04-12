@@ -1,34 +1,43 @@
 ﻿# BACKLOG
 
-- [ ] P0: Utrwalić provider layer (priority, fallback, pełne logowanie decyzji providera dla CLI i batch).
-- [x] P0: Naprawić runtime Windows `phonemizer/espeak` (`PermissionError` przy kopiowaniu `espeak-ng.dll`) przez fallback bez kopiowania DLL.
-- [x] P0: Usunąć regresję temp runtime: brak zapisu tymczasowego do `output_dir/_tmp_runtime`, domyślnie systemowy `TEMP/TMP`.
-- [x] P0: Ograniczyć temp batch do stałych katalogów per worker + cleanup po runie (bez nieograniczonego przyrostu plików).
-- [x] P0: Naprawić kolizję manifestów chapter-batch (manifest/checkpoint per `output_name`, bez fałszywego FileExistsError).
-- [x] P0: Naprawić kolizje `output_name` w batchu EPUB (unikalność nazw per `output_subdir`).
-- [x] P0: Dodać fallback retry GPU->CPU po błędach CUDA/cuDNN (`bad allocation`, `CUDNN_STATUS_EXECUTION_FAILED`) w batch schedulerze.
-- [x] P0: Naprawić zawieszanie schedulera po timeout workerów (bezterminowe `process.wait()` -> wait z timeout + force kill).
-- [x] P0: Wymusić retry GPU->CPU także po samym `worker_silence_timeout` oraz znormalizować `returncode` po killu (brak `None`).
-- [x] P1: Dodać preflight logi (`init/config/providers/workers/runtime`) przed startem renderowania (batch + single run).
-- [x] P1: Dodać log bootstrap przed importem scheduler/onnxruntime, aby było widać start nawet przy zawieszeniu importu.
-- [x] P1: Dodać flagę `--debug` i rozbudowane logi debug (preflight + build_jobs + worker lifecycle + stdout/timeout/retry).
-- [x] P1: Podpiąć `--debug` do `LOCAL_TTS_DEBUG`, aby parser EPUB (`load_chapters`) logował etapy także w subprocessach workerów.
-- [x] P0: Odchudzić import schedulera (lazy wrappers w `input_parsers/chunking`) aby start logów nie blokował się na imporcie `cli`.
-- [x] P0: Usunąć eager importy w `local_tts_renderer.__init__` (lazy `tts_main/batch_main`), bo blokowały start `run_tts_batch.py` na samym imporcie.
-- [x] P0: Dodać logi etapowe `build_jobs` oraz usunąć podwójne ładowanie TOC EPUB (jedno wczytanie, reuse).
-- [x] P0: Odseparować planowanie batch od ciężkiego `cli` (lekki parser `input_parsers` + szybka estymacja chunków bez importu `chunking/cli`).
-- [x] P0: Usunąć top-level import `onnxruntime`/`kokoro_onnx` z `cli` (lazy bootstrap + logi etapów), żeby worker nie wieszał się przed pierwszym logiem.
-- [x] P0: Dodać skrypt recovery po przerwanym runie (kill wiszących workerów repo + cleanup temp/resume).
-- [x] P0: Przepisać renderowanie chapterów na streaming chunk->writer + checkpoint po `part_close` (resume od ostatniego bezpiecznie domkniętego parta).
-- [ ] P1: Dodać opcjonalny tryb `safe` (np. `--safe-workers`) ograniczający obciążenie na słabszych maszynach bez zmiany domyślnego `2x GPU + 1x CPU`.
-- [ ] P0: Wydzielić logikę z `src/local_tts_renderer/cli.py` do mniejszych modułów bez zmiany zachowania runtime.
-- [ ] P0: Rozszerzyć testy snapshot/regression dla manifestów i kolejności chunków/rozdziałów na fixture `md` i `epub`.
-- [ ] P1: Dodać wsparcie AMD: `ROCmExecutionProvider` (Linux) i `DmlExecutionProvider` (Windows) z instrukcjami instalacji.
-- [x] P1: Dodać skrypt Windows do konfiguracji wykluczeń Microsoft Defender dla `.venv`, `models`, `out` i procesu `python.exe` z venv.
-- [ ] P1: Dodać ogólne zalecenia antywirusowe i diagnostykę wydajności I/O dla środowisk developerskich (bez ścieżek i host-specyficznych wyjątków).
-- [ ] P1: Poprawić ścieżkę CPU (presety i limity workerów/chunkingu dla słabszych maszyn).
-- [ ] P1: Przygotować wsparcie ARM (głównie Linux ARM64) wraz z checklistą zależności audio i ONNX.
-- [ ] P2: Dodać interfejs wielu modeli TTS (nie tylko Kokoro) z jednolitym kontraktem renderera.
-- [ ] P3: Dodać nowe formaty wejścia: `DOCX`.
-- [ ] P3: Dodać nowe formaty wejścia: `MOBI`.
-- [ ] P4: Ujednolicić CLI i profile uruchomienia dla środowisk dev/prod.
+- [ ] P0: Utrwalic provider layer (priority, fallback, pelne logowanie decyzji providera dla CLI i batch).
+- [x] P0: Naprawic runtime Windows `phonemizer/espeak` (`PermissionError` przy kopiowaniu `espeak-ng.dll`) przez fallback bez kopiowania DLL.
+- [x] P0: Usunac regresje temp runtime: brak zapisu tymczasowego do `output_dir/_tmp_runtime`, domyslnie systemowy `TEMP/TMP`.
+- [x] P0: Ograniczyc temp batch do stalych katalogów per worker + cleanup po runie (bez nieograniczonego przyrostu plików).
+- [x] P0: Naprawic kolizje manifestów chapter-batch (manifest/checkpoint per `output_name`, bez falszywego FileExistsError).
+- [x] P0: Naprawic kolizje `output_name` w batchu EPUB (unikalnosc nazw per `output_subdir`).
+- [x] P0: Dodac fallback retry GPU->CPU po bledach CUDA/cuDNN (`bad allocation`, `CUDNN_STATUS_EXECUTION_FAILED`) w batch schedulerze.
+- [x] P0: Naprawic zawieszanie schedulera po timeout workerów (bezterminowe `process.wait()` -> wait z timeout + force kill).
+- [x] P0: Wymusic retry GPU->CPU takze po samym `worker_silence_timeout` oraz znormalizowac `returncode` po killu (brak `None`).
+- [x] P1: Dodac preflight logi (`init/config/providers/workers/runtime`) przed startem renderowania (batch + single run).
+- [x] P1: Dodac log bootstrap przed importem scheduler/onnxruntime, aby bylo widac start nawet przy zawieszeniu importu.
+- [x] P1: Dodac flage `--debug` i rozbudowane logi debug (preflight + build_jobs + worker lifecycle + stdout/timeout/retry).
+- [x] P1: Podpiac `--debug` do `LOCAL_TTS_DEBUG`, aby parser EPUB (`load_chapters`) logowal etapy takze w subprocessach workerów.
+- [x] P0: Odchudzic import schedulera (lazy wrappers w `input_parsers/chunking`) aby start logów nie blokowal sie na imporcie `cli`.
+- [x] P0: Usunac eager importy w `local_tts_renderer.__init__` (lazy `tts_main/batch_main`), bo blokowaly start `run_tts_batch.py` na samym imporcie.
+- [x] P0: Dodac logi etapowe `build_jobs` oraz usunac podwójne ladowanie TOC EPUB (jedno wczytanie, reuse).
+- [x] P0: Odseparowac planowanie batch od ciezkiego `cli` (lekki parser `input_parsers` + szybka estymacja chunków bez importu `chunking/cli`).
+- [x] P0: Usunac top-level import `onnxruntime`/`kokoro_onnx` z `cli` (lazy bootstrap + logi etapów), zeby worker nie wieszal sie przed pierwszym logiem.
+- [x] P0: Dodac skrypt recovery po przerwanym runie (kill wiszacych workerów repo + cleanup temp/resume).
+- [x] P0: Przepisac renderowanie chapterów na streaming chunk->writer + checkpoint po `part_close` (resume od ostatniego bezpiecznie domknietego parta).
+- [x] P0: Naprawic kolizje i locki resume partów na Windows (`WinError 32`): unikalne temp-part per chapter + bezpieczne cleanup retry.
+- [x] P0: Poprawic nazewnictwo multipart chapterów EPUB (`chapter-part`, np. `04-02 - ...`) oraz zgodnosc `tracknumber` ID3.
+- [x] P0: Gdy chapter ma wiele partów, wymusic numerowanie tez dla part 1 (`04-01 - ...`) by odtwarzacze alfabetyczne trzymaly kolejnosc.
+- [x] P1: Optymalizacje stabilnosci dlugich runów: adaptacyjne `max-chars` per provider/attempt, warmup sesji, I/O gate przy finalizacji partów, twardy GPU->CPU fallback lock.
+- [x] P1: Ograniczyc narzut długich runów przez cache chapterów (`--chapter-cache`) i pominiecie ponownego parsowania EPUB/MD dla kazdego chapter joba.
+- [x] P1: Dodac agresywny recovery GPU po bledzie (`--gpu-recovery-seconds`, `--aggressive-gpu-recovery`) z cooldown workerów i czyszczeniem temp po timeout/CUDA error.
+- [x] P1: Dodac sterowanie konsola w batch run: pause/resume (`p`) i reczny restart workerow (`r`, `1..9`) bez przerywania calego runa.
+- [x] P1: Dodac opcjonalny podzial chapter run po partach (`--max-parts-per-run`), aby resetowac proces/VRAM miedzy partami duzych chapterów.
+- [ ] P1: Dodac opcjonalny tryb `safe` (np. `--safe-workers`) ograniczajacy obciazenie na slabszych maszynach bez zmiany domyslnego `2x GPU + 1x CPU`.
+- [ ] P0: Wydzielic logike z `src/local_tts_renderer/cli.py` do mniejszych modulów bez zmiany zachowania runtime.
+- [ ] P0: Rozszerzyc testy snapshot/regression dla manifestów i kolejnosci chunków/rozdzialów na fixture `md` i `epub`.
+- [ ] P1: Dodac wsparcie AMD: `ROCmExecutionProvider` (Linux) i `DmlExecutionProvider` (Windows) z instrukcjami instalacji.
+- [x] P1: Dodac skrypt Windows do konfiguracji wykluczen Microsoft Defender dla `.venv`, `models`, `out` i procesu `python.exe` z venv.
+- [ ] P1: Dodac ogólne zalecenia antywirusowe i diagnostyke wydajnosci I/O dla srodowisk developerskich (bez sciezek i host-specyficznych wyjatków).
+- [ ] P1: Poprawic sciezke CPU (presety i limity workerów/chunkingu dla slabszych maszyn).
+- [ ] P1: Przygotowac wsparcie ARM (glównie Linux ARM64) wraz z checklista zaleznosci audio i ONNX.
+- [ ] P2: Dodac interfejs wielu modeli TTS (nie tylko Kokoro) z jednolitym kontraktem renderera.
+- [ ] P3: Dodac nowe formaty wejscia: `DOCX`.
+- [ ] P3: Dodac nowe formaty wejscia: `MOBI`.
+- [ ] P4: Ujednolicic CLI i profile uruchomienia dla srodowisk dev/prod.
+

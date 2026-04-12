@@ -1,8 +1,8 @@
-﻿from local_tts_renderer.scheduler import (
-    CPU_IDLE_STEP_SECONDS,
+from local_tts_renderer.scheduler import (
     ChapterJob,
     WorkerConfig,
     WorkerStatus,
+    choose_worker_max_chars,
     cpu_allowed_chunk_budget,
     select_next_job,
 )
@@ -40,3 +40,16 @@ def test_cpu_idle_budget_increases() -> None:
     statuses = {"cpu-1": WorkerStatus(idle_since=1)}
     budget = cpu_allowed_chunk_budget(statuses, "cpu-1")
     assert budget >= 1
+
+
+def test_max_chars_shrinks_on_retry_for_gpu() -> None:
+    class Args:
+        cpu_worker_max_chars = 900
+        gpu_large_chapter_max_chars = 950
+        gpu_small_chapter_max_chars = 1350
+
+    job_first = _job(1, "Big", 15000, 15)
+    job_retry = ChapterJob(**{**job_first.__dict__, "attempt": 2})
+    first = choose_worker_max_chars(WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider"), job_first, Args())
+    retry = choose_worker_max_chars(WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider"), job_retry, Args())
+    assert retry < first

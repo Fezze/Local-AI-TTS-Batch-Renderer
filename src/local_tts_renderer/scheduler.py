@@ -71,6 +71,7 @@ class ChapterJob:
     estimated_chunks: int
     attempt: int = 1
     preferred_provider: str | None = None
+    fallback_locked: bool = False
 
 
 @dataclass
@@ -89,6 +90,7 @@ _LAST_BATCH_SUMMARY: tuple[int, int, int, int, int] | None = None
 _LAST_WORKER_PROGRESS: dict[str, tuple[float, int, int]] = {}
 _ACTIVE_PROCESSES: dict[str, subprocess.Popen] = {}
 _ACTIVE_PROCESSES_LOCK = threading.Lock()
+_PAUSE_SCHEDULING = threading.Event()
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,6 +119,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-workers", type=int, default=2, help="Number of GPU workers.")
     parser.add_argument("--cpu-workers", type=int, default=1, help="Number of CPU workers.")
     parser.add_argument("--providers", help="Comma-separated provider priority, for example CUDAExecutionProvider,CPUExecutionProvider.")
+    parser.add_argument("--warmup-text", default="Warmup run.", help="Short warmup text passed to worker runtime initialization.")
+    parser.add_argument("--gpu-recovery-seconds", type=float, default=12.0, help="Cooldown for GPU worker after CUDA/timeout failure to let VRAM recover.")
+    parser.add_argument("--aggressive-gpu-recovery", action="store_true", help="Stronger GPU recovery strategy after CUDA/timeout failures.")
+    parser.add_argument("--max-parts-per-run", type=int, default=0, help="Optional: restart worker process after closing N parts (0 disables).")
+    parser.add_argument("--no-console-controls", action="store_true", help="Disable keyboard controls (pause/restart) during batch run.")
     parser.add_argument("--debug", action="store_true", help="Enable verbose batch debug logs.")
     return parser.parse_args()
 
@@ -185,6 +192,17 @@ def parse_heartbeat_line(line: str) -> dict | None:
     return payload if payload.get("heartbeat") is True else None
 
 
+def parse_worker_done_line(line: str) -> dict | None:
+    stripped = line.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return payload if payload.get("worker_job_done") is True else None
+
+
 def register_process(worker_name: str, process: subprocess.Popen) -> None:
     with _ACTIVE_PROCESSES_LOCK:
         _ACTIVE_PROCESSES[worker_name] = process
@@ -224,6 +242,74 @@ def terminate_all_active_processes(force: bool = True) -> None:
         processes = list(_ACTIVE_PROCESSES.values())
     for process in processes:
         terminate_process_tree(process, force=force)
+
+
+def terminate_active_process(worker_name: str, force: bool = True) -> bool:
+    with _ACTIVE_PROCESSES_LOCK:
+        process = _ACTIVE_PROCESSES.get(worker_name)
+    if process is None:
+        return False
+    terminate_process_tree(process, force=force)
+    return True
+
+
+def start_console_controls(
+    scheduler_condition: threading.Condition,
+    workers: list[WorkerConfig],
+    enabled: bool,
+) -> tuple[threading.Event, threading.Thread | None]:
+    stop_event = threading.Event()
+    if not enabled or os.name != "nt" or not sys.stdin.isatty():
+        return stop_event, None
+
+    worker_shortcuts = {str(index): worker.name for index, worker in enumerate(workers, start=1)}
+    shortcut_list = " ".join(f"{key}:{name}" for key, name in worker_shortcuts.items())
+    print(
+        f"[batch:controls] p=pause/resume r=restart-active {shortcut_list} (restart single worker)",
+        flush=True,
+    )
+
+    def run_controls() -> None:
+        import msvcrt
+
+        while not stop_event.is_set():
+            if not msvcrt.kbhit():
+                time.sleep(0.1)
+                continue
+            key = msvcrt.getwch()
+            if not key:
+                continue
+            lowered = key.lower()
+            if lowered == "p":
+                if _PAUSE_SCHEDULING.is_set():
+                    _PAUSE_SCHEDULING.clear()
+                    print("[batch:control] resumed", flush=True)
+                else:
+                    _PAUSE_SCHEDULING.set()
+                    print("[batch:control] paused (running jobs continue)", flush=True)
+                with scheduler_condition:
+                    scheduler_condition.notify_all()
+                continue
+            if lowered == "r":
+                terminate_all_active_processes(force=True)
+                print("[batch:control] restart requested for all active workers", flush=True)
+                continue
+            if lowered in worker_shortcuts:
+                worker_name = worker_shortcuts[lowered]
+                if terminate_active_process(worker_name, force=True):
+                    print(f"[batch:control] restart requested for {worker_name}", flush=True)
+                else:
+                    print(f"[batch:control] {worker_name} is idle", flush=True)
+                continue
+            if lowered == "h":
+                print(
+                    f"[batch:controls] p=pause/resume r=restart-active {shortcut_list}",
+                    flush=True,
+                )
+
+    thread = threading.Thread(target=run_controls, name="batch-console-controls", daemon=True)
+    thread.start()
+    return stop_event, thread
 
 
 def format_seconds(seconds: float) -> str:
@@ -331,14 +417,25 @@ def is_job_complete(output_dir: Path, job: ChapterJob) -> bool:
     return True
 
 
-def build_jobs(inputs: list[Path], output_dir: Path, fresh: bool, debug: bool = False) -> tuple[list[ChapterJob], list[ChapterJob]]:
+def build_jobs(inputs: list[Path], output_dir: Path, fresh: bool, debug: bool = False) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
     jobs: list[ChapterJob] = []
     skipped: list[ChapterJob] = []
+    chapter_cache_map: dict[Path, Path] = {}
+    cache_root = output_dir / ".cache" / "chapter-index"
+    cache_root.mkdir(parents=True, exist_ok=True)
     for source_path in inputs:
         source_started = time.time()
         print(f"[batch:scan] source_start path={source_path}", flush=True)
         chapters_load_started = time.time()
         chapters = [chapter for chapter in load_chapters(source_path) if chapter.text and chapter.text.strip()]
+        cache_key = re_slug(str(source_path))
+        cache_path = cache_root / f"{cache_key}.json"
+        cache_payload = [
+            {"title": chapter.title, "text": chapter.text, "group": chapter.group}
+            for chapter in chapters
+        ]
+        cache_path.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
+        chapter_cache_map[source_path] = cache_path
         print(
             f"[batch:scan] chapters_loaded path={source_path} chapters={len(chapters)} "
             f"elapsed={time.time() - chapters_load_started:.1f}s",
@@ -410,7 +507,7 @@ def build_jobs(inputs: list[Path], output_dir: Path, fresh: bool, debug: bool = 
             f"elapsed={time.time() - source_started:.1f}s",
             flush=True,
         )
-    return jobs, skipped
+    return jobs, skipped, chapter_cache_map
 
 
 def is_short_section_title(title: str) -> bool:
@@ -419,11 +516,18 @@ def is_short_section_title(title: str) -> bool:
 
 
 def choose_worker_max_chars(worker: WorkerConfig, job: ChapterJob, args: argparse.Namespace) -> int:
+    retry_base = 0.7 if args.aggressive_gpu_recovery else 0.8
+    retry_shrink = retry_base ** max(job.attempt - 1, 0)
     if worker.provider == "CPUExecutionProvider":
-        return args.cpu_worker_max_chars
+        base = args.cpu_worker_max_chars
+        if is_short_section_title(job.chapter_title):
+            base = int(base * 1.2)
+        return max(350, int(base * retry_shrink))
     if job.estimated_chunks >= 12 or job.estimated_chars >= 12000:
-        return args.gpu_large_chapter_max_chars
-    return args.gpu_small_chapter_max_chars
+        base = args.gpu_large_chapter_max_chars
+    else:
+        base = args.gpu_small_chapter_max_chars
+    return max(450, int(base * retry_shrink))
 
 
 def select_next_job(
@@ -501,11 +605,20 @@ def run_worker(
     scheduler_condition: threading.Condition,
     batch_started_at: float,
     worker_temp_dirs: dict[str, Path],
+    chapter_cache_map: dict[Path, Path],
 ) -> None:
     debug_log(args.debug, f"worker_loop_start worker={worker.name} provider={worker.provider}")
+    cooldown_until = 0.0
     while True:
         with scheduler_condition:
             while True:
+                if _PAUSE_SCHEDULING.is_set():
+                    scheduler_condition.wait(timeout=0.5)
+                    continue
+                if cooldown_until > time.time():
+                    wait_seconds = min(cooldown_until - time.time(), 1.0)
+                    scheduler_condition.wait(timeout=max(wait_seconds, 0.1))
+                    continue
                 job_index = select_next_job(pending_jobs, worker, statuses, args.cpu_max_chars, args.gpu_short_first)
                 if job_index is not None:
                     job = pending_jobs.pop(job_index)
@@ -562,13 +675,20 @@ def run_worker(
             args.trim_mode,
             "--heartbeat-seconds",
             str(args.heartbeat_seconds),
+            "--warmup-text",
+            args.warmup_text,
         ]
+        cache_path = chapter_cache_map.get(source_path)
+        if cache_path is not None:
+            command.extend(["--chapter-cache", str(cache_path)])
         if args.force:
             command.append("--force")
         if args.keep_chunks:
             command.append("--keep-chunks")
         if args.mp3_only:
             command.append("--mp3-only")
+        if args.max_parts_per_run > 0:
+            command.extend(["--max-parts-per-run", str(args.max_parts_per_run)])
 
         env = os.environ.copy()
         env["ONNX_PROVIDER"] = worker.provider
@@ -760,11 +880,39 @@ def run_worker(
             if return_code == 0:
                 counters["done"] += 1
                 counters["completed_chunks"] += job.estimated_chunks
+            elif return_code == 75 and args.max_parts_per_run > 0:
+                pending_jobs.append(job)
+                append_runner_log(
+                    runner_log,
+                    {
+                        "ts": timestamp(),
+                        "event": "partial_continue",
+                        "worker": worker.name,
+                        "input": str(source_path),
+                        "chapter_index": job.chapter_index,
+                        "chapter_title": job.chapter_title,
+                        "attempt": job.attempt,
+                        "log": str(job_log),
+                    },
+                )
+                debug_log(
+                    args.debug,
+                    f"worker_partial_continue chapter={job.chapter_index} attempt={job.attempt}",
+                )
             else:
                 if job.attempt <= args.max_retries:
+                    if job.fallback_locked:
+                        counters["failed"] += 1
+                        debug_log(args.debug, f"worker_failed_final chapter={job.chapter_index} reason=fallback_locked")
+                        statuses[worker.name] = WorkerStatus(idle_since=time.time())
+                        print_batch_summary(statuses, total_jobs, counters["done"], counters["failed"], counters["completed_chunks"], total_chunks, batch_started_at)
+                        scheduler_condition.notify_all()
+                        continue
                     retry_provider = job.preferred_provider
+                    fallback_locked = False
                     if (saw_cuda_error or timed_out) and worker.provider != "CPUExecutionProvider":
                         retry_provider = "CPUExecutionProvider"
+                        fallback_locked = True
                     retry_job = ChapterJob(
                         source_path=job.source_path,
                         chapter_index=job.chapter_index,
@@ -775,6 +923,7 @@ def run_worker(
                         estimated_chunks=job.estimated_chunks,
                         attempt=job.attempt + 1,
                         preferred_provider=retry_provider,
+                        fallback_locked=fallback_locked,
                     )
                     pending_jobs.append(retry_job)
                     append_runner_log(
@@ -790,6 +939,7 @@ def run_worker(
                             "next_provider": retry_provider,
                             "timeout_triggered": timed_out,
                             "cuda_error_detected": saw_cuda_error,
+                            "fallback_locked": fallback_locked,
                             "log": str(job_log),
                         },
                     )
@@ -801,6 +951,16 @@ def run_worker(
                 else:
                     counters["failed"] += 1
                     debug_log(args.debug, f"worker_failed_final chapter={job.chapter_index} attempts={job.attempt}")
+            if (saw_cuda_error or timed_out) and worker.provider != "CPUExecutionProvider":
+                recovery_seconds = max(args.gpu_recovery_seconds, 1.0)
+                if args.aggressive_gpu_recovery:
+                    recovery_seconds = max(recovery_seconds, 20.0)
+                cooldown_until = time.time() + recovery_seconds
+                clear_directory_contents(worker_temp_dirs[worker.name])
+                print(
+                    f"[batch:recovery] worker={worker.name} provider={worker.provider} cooldown={recovery_seconds:.1f}s reason={'timeout' if timed_out else 'cuda_error'}",
+                    flush=True,
+                )
             statuses[worker.name] = WorkerStatus(idle_since=time.time())
             print_batch_summary(statuses, total_jobs, counters["done"], counters["failed"], counters["completed_chunks"], total_chunks, batch_started_at)
             scheduler_condition.notify_all()
@@ -851,10 +1011,13 @@ def main() -> int:
         "[batch:config] "
         f"gpu_workers={args.gpu_workers} cpu_workers={args.cpu_workers} "
         f"max_retries={args.max_retries} silence_timeout={args.worker_silence_timeout_seconds}s "
-        f"trim_mode={args.trim_mode} mp3_only={args.mp3_only}",
+        f"trim_mode={args.trim_mode} mp3_only={args.mp3_only} warmup={'on' if bool(args.warmup_text.strip()) else 'off'} "
+        f"max_parts_per_run={args.max_parts_per_run} "
+        f"gpu_recovery={args.gpu_recovery_seconds}s aggressive_recovery={args.aggressive_gpu_recovery} "
+        f"console_controls={'off' if args.no_console_controls else 'on'}",
         flush=True,
     )
-    chapter_jobs, skipped_jobs = build_jobs(inputs, output_dir, args.fresh, debug=args.debug)
+    chapter_jobs, skipped_jobs, chapter_cache_map = build_jobs(inputs, output_dir, args.fresh, debug=args.debug)
     if not chapter_jobs:
         if skipped_jobs:
             print(f"Nothing to do. Skipped {len(skipped_jobs)} completed chapter jobs.")
@@ -916,13 +1079,18 @@ def main() -> int:
     counters = {"done": 0, "failed": 0, "active": 0, "completed_chunks": 0}
     scheduler_lock = threading.Lock()
     scheduler_condition = threading.Condition(scheduler_lock)
+    controls_stop, controls_thread = start_console_controls(
+        scheduler_condition=scheduler_condition,
+        workers=workers,
+        enabled=not args.no_console_controls,
+    )
     pending_jobs = list(chapter_jobs)
     debug_log(args.debug, f"pending_jobs_initialized={len(pending_jobs)} total_chunks={total_chunks}")
     batch_started_at = time.time()
     threads = [
         threading.Thread(
             target=run_worker,
-            args=(worker, pending_jobs, args, runner_log, python_exe, script_path, len(chapter_jobs), total_chunks, statuses, counters, scheduler_condition, batch_started_at, worker_temp_dirs),
+            args=(worker, pending_jobs, args, runner_log, python_exe, script_path, len(chapter_jobs), total_chunks, statuses, counters, scheduler_condition, batch_started_at, worker_temp_dirs, chapter_cache_map),
             daemon=True,
         )
         for worker in workers
@@ -945,6 +1113,9 @@ def main() -> int:
         )
         return 130
     finally:
+        controls_stop.set()
+        if controls_thread is not None:
+            controls_thread.join(timeout=1.0)
         shutil.rmtree(run_tmp_root, ignore_errors=True)
 
     print(f"[batch] finished | done {counters['done']}/{len(chapter_jobs)} | failed {counters['failed']}", flush=True)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import contextlib
 import ctypes
 import html
 import json
@@ -40,6 +41,10 @@ DEFAULT_TRIM_MODE = "off"
 DEFAULT_HEARTBEAT_SECONDS = 30.0
 _ORT = None
 _KOKORO_CLASS = None
+
+
+class PartialRunComplete(Exception):
+    pass
 
 
 @dataclass
@@ -90,12 +95,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mp3-bitrate", type=int, default=192, help="MP3 bitrate in kbps for WAV to MP3 conversion.")
     parser.add_argument("--list-chapters", action="store_true", help="Print extracted chapter info and exit without generating audio.")
     parser.add_argument("--chapter-index", type=int, help="Render only one extracted chapter by 1-based index.")
+    parser.add_argument("--chapter-cache", help="Optional JSON cache with pre-extracted chapters for faster chapter jobs.")
     parser.add_argument("--output-subdir", help="Optional output subdirectory under --output-dir for chapter batch jobs.")
     parser.add_argument("--output-name", help="Optional base output name for chapter batch jobs.")
     parser.add_argument("--trim-mode", choices=["full", "light", "off"], default=DEFAULT_TRIM_MODE, help="Silence trimming mode.")
     parser.add_argument("--heartbeat-seconds", type=float, default=DEFAULT_HEARTBEAT_SECONDS, help="Emit periodic heartbeat lines while rendering.")
     parser.add_argument("--providers", help="Comma-separated ONNX provider priority, for example CUDAExecutionProvider,CPUExecutionProvider.")
     parser.add_argument("--temp-dir", help="Optional temp directory used by runtime dependencies such as phonemizer.")
+    parser.add_argument("--warmup-text", default="Warmup run.", help="Optional short warmup text. Empty disables warmup.")
+    parser.add_argument("--max-parts-per-run", type=int, default=0, help="Optional limit of closed parts per process run. 0 disables splitting.")
     return parser.parse_args()
 
 
@@ -619,6 +627,18 @@ def load_chapters(source_path: Path) -> list[Chapter]:
     return chapters
 
 
+def load_chapters_from_cache(cache_path: Path) -> list[Chapter]:
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    chapters: list[Chapter] = []
+    for item in payload:
+        title = str(item.get("title", "")).strip()
+        text = str(item.get("text", ""))
+        group_raw = item.get("group")
+        group = str(group_raw).strip() if group_raw is not None else None
+        chapters.append(Chapter(title=title or "Untitled", text=text, group=group))
+    return chapters
+
+
 def is_short_structure_marker(title: str, text: str) -> bool:
     normalized_title = re.sub(r"\s+", " ", title).strip()
     normalized_text = re.sub(r"\s+", " ", text).strip()
@@ -893,6 +913,35 @@ def remove_output_files(part: dict) -> None:
             path.unlink()
 
 
+def build_temp_part_base_name(part_index: int, final_stem_override: str | None) -> str:
+    if final_stem_override:
+        safe_stem = sanitize_filename_component(final_stem_override)
+        return f"tmp-{safe_stem}-part-{part_index:02d}"
+    return f"_part-{part_index:02d}"
+
+
+def safe_remove_path(path: Path, retries: int = 6, delay_seconds: float = 0.25) -> bool:
+    for attempt in range(retries):
+        try:
+            path.unlink(missing_ok=True)
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            if not path.exists():
+                return True
+            if attempt == retries - 1:
+                break
+            time.sleep(delay_seconds * (attempt + 1))
+        except OSError:
+            if not path.exists():
+                return True
+            if attempt == retries - 1:
+                break
+            time.sleep(delay_seconds * (attempt + 1))
+    return not path.exists()
+
+
 def compute_part_output_paths(
     output_root: Path,
     base_output_dir: Path,
@@ -901,14 +950,28 @@ def compute_part_output_paths(
     base_name: str,
     group_name: str | None,
     final_stem_override: str | None = None,
+    force_numbered_first_part: bool = False,
 ) -> tuple[Path, Path]:
     relative_root = output_root.relative_to(base_output_dir)
     wav_dir = base_output_dir / "wav" / relative_root
     mp3_dir = base_output_dir / "mp3" / relative_root
 
     if not multi_part and part_index == 1:
+        if force_numbered_first_part and final_stem_override:
+            normalized = sanitize_filename_component(final_stem_override)
+            chapter_match = re.match(r"^(\d+)\s*-\s*(.+)$", normalized)
+            if chapter_match:
+                chapter_no, chapter_rest = chapter_match.groups()
+                chapter_part_name = f"{chapter_no}-01 - {chapter_rest.strip()}"
+                return wav_dir / f"{chapter_part_name}.wav", mp3_dir / f"{chapter_part_name}.mp3"
         final_name = final_stem_override or (relative_root.name if group_name is None else base_name)
         return wav_dir / f"{final_name}.wav", mp3_dir / f"{final_name}.mp3"
+    if final_stem_override and base_name == sanitize_filename_component(final_stem_override):
+        chapter_match = re.match(r"^(\d+)\s*-\s*(.+)$", base_name)
+        if chapter_match:
+            chapter_no, chapter_rest = chapter_match.groups()
+            chapter_part_name = f"{chapter_no}-{part_index:02d} - {chapter_rest.strip()}"
+            return wav_dir / f"{chapter_part_name}.wav", mp3_dir / f"{chapter_part_name}.mp3"
     return wav_dir / f"{part_index:02d}-{base_name}.wav", mp3_dir / f"{part_index:02d}-{base_name}.mp3"
 
 
@@ -1093,6 +1156,40 @@ def write_mp3_tags(mp3_path: Path, title: str, track_number: int, metadata: Audi
     id3.save(v2_version=3)
 
 
+@contextlib.contextmanager
+def cross_process_io_gate(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+b")
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
 def extract_track_number(stem: str, fallback: int) -> int:
     match = re.match(r"^(\d+)", stem)
     if match:
@@ -1119,15 +1216,19 @@ class OutputPartWriter:
         self.group_name = group_name
         self.output_root = output_root
         self.base_output_dir = base_output_dir
+        self.io_gate_lock_path = self.base_output_dir / ".local_tts_io.lock"
         self.multi_part = multi_part
         self.audio_metadata = audio_metadata
         self.mp3_only = mp3_only
         self.final_stem_override = final_stem_override
-        self.base_name = f"_part-{part_index:02d}"
+        self.base_name = build_temp_part_base_name(part_index=part_index, final_stem_override=final_stem_override)
         self.wav_path, self.mp3_path = compute_part_output_paths(output_root, base_output_dir, part_index, multi_part, self.base_name, group_name, final_stem_override)
 
         if not force and (self.wav_path.exists() or self.mp3_path.exists()):
-            raise FileExistsError(f"Output already exists for {self.wav_path.stem}. Use --force to overwrite.")
+            wav_cleared = safe_remove_path(self.wav_path) if self.wav_path.exists() else True
+            mp3_cleared = safe_remove_path(self.mp3_path) if self.mp3_path.exists() else True
+            if (not wav_cleared and self.wav_path.exists()) or (not mp3_cleared and self.mp3_path.exists()):
+                raise FileExistsError(f"Output already exists for {self.wav_path.stem}. Use --force to overwrite.")
 
         if not self.mp3_only:
             self.wav_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1163,7 +1264,7 @@ class OutputPartWriter:
         self.mp3_handle.write(self.encoder.encode(pcm.tobytes()))
         self.samples_written += len(mono_audio)
 
-    def close(self) -> dict:
+    def close(self, force_numbered_first_part: bool = False) -> dict:
         self.mp3_handle.write(self.encoder.flush())
         self.mp3_handle.close()
         if self.wav_file is not None:
@@ -1178,21 +1279,23 @@ class OutputPartWriter:
             final_base_name,
             self.group_name,
             self.final_stem_override,
+            force_numbered_first_part=force_numbered_first_part,
         )
-        if not self.mp3_only and self.wav_path != final_wav_path:
-            if final_wav_path.exists():
-                final_wav_path.unlink()
-            self.wav_path.replace(final_wav_path)
-        if self.mp3_path != final_mp3_path:
-            if final_mp3_path.exists():
-                final_mp3_path.unlink()
-            self.mp3_path.replace(final_mp3_path)
-        self.wav_path = final_wav_path
-        self.mp3_path = final_mp3_path
-        if self.audio_metadata is not None:
-            album_title = get_group_leaf_title(self.group_name) if self.group_name else self.audio_metadata.source_title
-            track_number = extract_track_number(self.mp3_path.stem, self.part_index)
-            write_mp3_tags(self.mp3_path, final_title, track_number, self.audio_metadata, album_title=album_title)
+        with cross_process_io_gate(self.io_gate_lock_path):
+            if not self.mp3_only and self.wav_path != final_wav_path:
+                if final_wav_path.exists():
+                    safe_remove_path(final_wav_path)
+                self.wav_path.replace(final_wav_path)
+            if self.mp3_path != final_mp3_path:
+                if final_mp3_path.exists():
+                    safe_remove_path(final_mp3_path)
+                self.mp3_path.replace(final_mp3_path)
+            self.wav_path = final_wav_path
+            self.mp3_path = final_mp3_path
+            if self.audio_metadata is not None:
+                album_title = get_group_leaf_title(self.group_name) if self.group_name else self.audio_metadata.source_title
+                track_number = extract_track_number(self.mp3_path.stem, self.part_index)
+                write_mp3_tags(self.mp3_path, final_title, track_number, self.audio_metadata, album_title=album_title)
         part_payload = {
             "part": self.part_index,
             "wav_path": None if self.mp3_only else str(self.wav_path),
@@ -1329,6 +1432,7 @@ def render_audio(
     audio_metadata: AudioMetadata | None = None,
     heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
     final_stem_override: str | None = None,
+    max_parts_per_run: int = 0,
 ) -> dict:
     manifest_root = output_root / final_stem_override if final_stem_override else output_root
     manifest_path = manifest_root.with_suffix(".json")
@@ -1366,6 +1470,7 @@ def render_audio(
     output_parts: list[dict] = resume_state.get("output_parts", []) if resume_state else []
     next_chunk_index = normalized_next_chunk_index if resume_state else 1
     part_index = resume_state.get("next_part_index", 1) if resume_state else 1
+    parts_closed_this_run = 0
     total_chapters = len(chapters)
     multi_part = total_chapters > 1
     source_groups = [chapter.group for chapter in chapters if chapter.group]
@@ -1379,10 +1484,21 @@ def render_audio(
         resume_output_root = output_root
         if grouped_output and current_group:
             resume_output_root = output_root / group_dir_map.get(current_group, Path(slugify(current_group)))
-        stale_wav, stale_mp3 = compute_part_output_paths(resume_output_root, base_output_dir, part_index, multi_part, f"_part-{part_index:02d}", current_group)
+        stale_base_name = build_temp_part_base_name(part_index=part_index, final_stem_override=final_stem_override)
+        stale_wav, stale_mp3 = compute_part_output_paths(resume_output_root, base_output_dir, part_index, multi_part, stale_base_name, current_group, final_stem_override)
         for stale_path in (stale_wav, stale_mp3):
             if stale_path.exists():
-                stale_path.unlink()
+                removed = safe_remove_path(stale_path)
+                if not removed and stale_path.exists():
+                    print(
+                        json.dumps(
+                            {
+                                "resume_cleanup_warning": True,
+                                "path": str(stale_path),
+                            }
+                        ),
+                        flush=True,
+                    )
     try:
         for chapter_index, chapter in enumerate(chapters, start=1):
             if chapter_index < next_chapter_index:
@@ -1485,7 +1601,17 @@ def render_audio(
                 next_chunk_index = chunk.index + 1
 
                 if max_part_samples is not None and current_writer.samples_written >= max_part_samples:
-                    output_parts.append(current_writer.close())
+                    has_more_chunks_in_chapter = next_chunk_index <= chapter_end_index
+                    output_parts.append(
+                        current_writer.close(
+                            force_numbered_first_part=(
+                                bool(final_stem_override)
+                                and current_writer.part_index == 1
+                                and has_more_chunks_in_chapter
+                            )
+                        )
+                    )
+                    parts_closed_this_run += 1
                     part_index += 1
                     save_safe_checkpoint(
                         checkpoint_path,
@@ -1500,6 +1626,20 @@ def render_audio(
                         next_part_index=part_index,
                     )
                     current_writer = None
+                    has_remaining_work = has_more_chunks_in_chapter or (chapter_index < total_chapters)
+                    if max_parts_per_run > 0 and parts_closed_this_run >= max_parts_per_run and has_remaining_work:
+                        print(
+                            json.dumps(
+                                {
+                                    "run_partial": True,
+                                    "next_chapter_index": chapter_index if has_more_chunks_in_chapter else chapter_index + 1,
+                                    "next_chunk_index": next_chunk_index,
+                                    "next_part_index": part_index,
+                                }
+                            ),
+                            flush=True,
+                        )
+                        raise PartialRunComplete()
 
             next_chapter_index = chapter_index + 1
 
@@ -1616,9 +1756,32 @@ def main() -> int:
     print("[run:bootstrap] creating kokoro session...", flush=True)
     kokoro = KokoroClass(str(model_path), str(voices_path))
     print(json.dumps({"session_providers": kokoro.sess.get_providers()}), flush=True)
+    if args.warmup_text and args.warmup_text.strip():
+        print("[run:warmup] start", flush=True)
+        warmup_start = time.time()
+        try:
+            create_audio_with_retry(
+                kokoro=kokoro,
+                text=args.warmup_text.strip(),
+                voice=args.voice,
+                speed=args.speed,
+                lang=args.lang,
+                trim_mode=args.trim_mode,
+            )
+            print(f"[run:warmup] done elapsed={time.time() - warmup_start:.2f}s", flush=True)
+        except Exception as exc:
+            print(f"[run:warmup] failed error={exc}", flush=True)
 
     for source_path in inputs:
-        chapters = load_chapters(source_path)
+        if args.chapter_cache and args.chapter_index is not None:
+            cache_path = Path(args.chapter_cache).resolve()
+            if cache_path.exists():
+                chapters = load_chapters_from_cache(cache_path)
+                debug_trace(f"load_chapters:cache_done path={cache_path} chapters={len(chapters)}")
+            else:
+                chapters = load_chapters(source_path)
+        else:
+            chapters = load_chapters(source_path)
         chapters = [chapter for chapter in chapters if chapter.text and chapter.text.strip()]
         if not chapters:
             print(f"Skipped {source_path}: no readable chapters after cleaning.", file=sys.stderr)
@@ -1654,26 +1817,30 @@ def main() -> int:
 
             chapter_output_root = output_dir / chapter_subdir
             chapter_for_render = Chapter(title=chapter_title, text=original_chapter.text, group=None)
-            manifest = render_audio(
-                kokoro=kokoro,
-                chapters=[chapter_for_render],
-                base_output_dir=output_dir,
-                output_root=chapter_output_root,
-                group_dir_map={},
-                voice=args.voice,
-                lang=args.lang,
-                trim_mode=args.trim_mode,
-                speed=args.speed,
-                max_chars=args.max_chars,
-                silence_ms=args.silence_ms,
-                max_part_minutes=args.max_part_minutes,
-                keep_chunks=args.keep_chunks,
-                mp3_only=args.mp3_only,
-                force=args.force,
-                audio_metadata=audio_metadata,
-                heartbeat_seconds=args.heartbeat_seconds,
-                final_stem_override=output_name,
-            )
+            try:
+                manifest = render_audio(
+                    kokoro=kokoro,
+                    chapters=[chapter_for_render],
+                    base_output_dir=output_dir,
+                    output_root=chapter_output_root,
+                    group_dir_map={},
+                    voice=args.voice,
+                    lang=args.lang,
+                    trim_mode=args.trim_mode,
+                    speed=args.speed,
+                    max_chars=args.max_chars,
+                    silence_ms=args.silence_ms,
+                    max_part_minutes=args.max_part_minutes,
+                    keep_chunks=args.keep_chunks,
+                    mp3_only=args.mp3_only,
+                    force=args.force,
+                    audio_metadata=audio_metadata,
+                    heartbeat_seconds=args.heartbeat_seconds,
+                    final_stem_override=output_name,
+                    max_parts_per_run=args.max_parts_per_run,
+                )
+            except PartialRunComplete:
+                return 75
             print(
                 json.dumps(
                     {
@@ -1690,25 +1857,29 @@ def main() -> int:
             continue
 
         output_root = output_root_base
-        manifest = render_audio(
-            kokoro=kokoro,
-            chapters=chapters,
-            base_output_dir=output_dir,
-            output_root=output_root,
-            group_dir_map=group_dir_map,
-            voice=args.voice,
-            lang=args.lang,
-            trim_mode=args.trim_mode,
-            speed=args.speed,
-            max_chars=args.max_chars,
-            silence_ms=args.silence_ms,
-            max_part_minutes=args.max_part_minutes,
-            keep_chunks=args.keep_chunks,
-            mp3_only=args.mp3_only,
-            force=args.force,
-            audio_metadata=audio_metadata,
-            heartbeat_seconds=args.heartbeat_seconds,
-        )
+        try:
+            manifest = render_audio(
+                kokoro=kokoro,
+                chapters=chapters,
+                base_output_dir=output_dir,
+                output_root=output_root,
+                group_dir_map=group_dir_map,
+                voice=args.voice,
+                lang=args.lang,
+                trim_mode=args.trim_mode,
+                speed=args.speed,
+                max_chars=args.max_chars,
+                silence_ms=args.silence_ms,
+                max_part_minutes=args.max_part_minutes,
+                keep_chunks=args.keep_chunks,
+                mp3_only=args.mp3_only,
+                force=args.force,
+                audio_metadata=audio_metadata,
+                heartbeat_seconds=args.heartbeat_seconds,
+                max_parts_per_run=args.max_parts_per_run,
+            )
+        except PartialRunComplete:
+            return 75
         print(
             json.dumps(
                 {
