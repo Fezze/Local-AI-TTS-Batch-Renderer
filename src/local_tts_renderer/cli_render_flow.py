@@ -274,6 +274,7 @@ def render_audio(
     heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
     final_stem_override: str | None = None,
     max_parts_per_run: int = 0,
+    max_phoneme_chars: int = 0,
 ) -> dict:
     manifest_root = output_root / final_stem_override if final_stem_override else output_root
     manifest_path = manifest_root.with_suffix(".json")
@@ -285,7 +286,10 @@ def render_audio(
     keep_chunks = keep_chunks and not mp3_only
     resume_state = None if force else load_resume_state(checkpoint_path)
     manifest_chunks: list[dict] = resume_state.get("manifest_chunks", []) if resume_state else []
-    chapter_chunk_counts = [len(chunk_section(chapter.title, chapter.text, max_chars=max_chars, start_index=1)) for chapter in chapters]
+    effective_max_chars = max_chars
+    if max_phoneme_chars > 0:
+        effective_max_chars = min(effective_max_chars, max_phoneme_chars)
+    chapter_chunk_counts = [len(chunk_section(chapter.title, chapter.text, max_chars=effective_max_chars, start_index=1)) for chapter in chapters]
     chapter_start_indices: list[int] = []
     next_start_index = 1
     for chunk_count in chapter_chunk_counts:
@@ -338,7 +342,7 @@ def render_audio(
                 continue
             chapter_start_index = chapter_start_indices[chapter_index - 1]
             chapter_end_index = chapter_start_index + chapter_chunk_counts[chapter_index - 1] - 1
-            chapter_chunks = chunk_section(chapter.title, chapter.text, max_chars=max_chars, start_index=chapter_start_index)
+            chapter_chunks = chunk_section(chapter.title, chapter.text, max_chars=effective_max_chars, start_index=chapter_start_index)
             chapter_chunks = [chunk for chunk in chapter_chunks if chunk.index >= next_chunk_index]
             if not chapter_chunks:
                 next_chunk_index = chapter_end_index + 1

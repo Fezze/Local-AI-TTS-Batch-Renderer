@@ -18,6 +18,10 @@
 
 ## Ostatnio zamkniete
 
+- [x] Przeniesione domyslne parametry, progi i magiczne wartosci do `src/local_tts_renderer/defaults.py` jako jedno zrodlo prawdy.
+- [x] Dodany bezpieczny limit dlugosci chunkow (`--max-phoneme-chars`) z zachowaniem granic zdan, zeby unikac ucinania fonemow.
+- [x] Ujednolicone domyslne parametry (voice/speed/max_chars/silence/max_part/heartbeat/output_dir) w jednym module `defaults.py` zamiast rozjechanych wartosci CLI vs batch.
+- [x] Dodane `--md-single-chapter` i `--max-chapter-chars` dla Markdown oraz skrót `d` do przełączania debug w kontrolkach batch.
 - [x] Podniesione coverage: total 71% -> 74% przez doslownie zaciecie luk w `cli_entry`, `cli_parsing`, `cli_runtime`, `scheduler_jobs` i `scheduler_process` (55 testow).
 - [x] Podniesione coverage: `cli_core` 33% -> 48%, `scheduler_runtime` 13% -> 78%, total 51% -> 65% (50 testow).
 - [x] Rozbity `cli_core.py` na `cli_entry.py` + `cli_render_flow.py` + utility moduly; `cli_core.py` zostawiony jako cienka fasada (83 linie), testy regresji zielone (50/50).

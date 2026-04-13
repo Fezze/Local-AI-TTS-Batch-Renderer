@@ -68,6 +68,16 @@ def is_scheduler_paused() -> bool:
     return _PAUSE_SCHEDULING.is_set()
 
 
+def _toggle_debug() -> bool:
+    current = os.environ.get("LOCAL_TTS_DEBUG", "").strip().lower() in {"1", "true", "yes", "on", "debug"}
+    new_value = not current
+    if new_value:
+        os.environ["LOCAL_TTS_DEBUG"] = "1"
+    else:
+        os.environ.pop("LOCAL_TTS_DEBUG", None)
+    return new_value
+
+
 def start_console_controls(
     scheduler_condition: threading.Condition,
     workers: list[WorkerConfig],
@@ -108,6 +118,10 @@ def start_console_controls(
             if lowered == "r":
                 terminate_all_active_processes(force=True)
                 print("[batch:control] restart requested for all active workers", flush=True)
+                continue
+            if lowered == "d":
+                enabled = _toggle_debug()
+                print(f"[batch:control] debug {'enabled' if enabled else 'disabled'}", flush=True)
                 continue
             if lowered in worker_shortcuts:
                 worker_name = worker_shortcuts[lowered]

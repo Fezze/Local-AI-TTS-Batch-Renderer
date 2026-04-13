@@ -24,6 +24,7 @@ from .cli_models import (
     MODEL_URL,
     VOICES_URL,
 )
+from .defaults import DEFAULT_MAX_PHONEME_CHARS, DEFAULT_MP3_ONLY, DEFAULT_OUTPUT_DIR, DEFAULT_WARMUP_TEXT
 from .providers import resolve_provider
 
 _ORT = None
@@ -33,16 +34,17 @@ _KOKORO_CLASS = None
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert English Markdown files to speech with Kokoro ONNX.")
     parser.add_argument("--input", nargs="+", help="Markdown file(s) to process.")
-    parser.add_argument("--output-dir", default=".\\out", help="Directory for generated audio and manifests.")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated audio and manifests.")
     parser.add_argument("--model-dir", default="models", help="Directory for Kokoro model files.")
     parser.add_argument("--voice", default=DEFAULT_VOICE, help="Kokoro voice id, for example af_bella.")
     parser.add_argument("--lang", default=DEFAULT_LANG, help="Language code for Kokoro ONNX.")
     parser.add_argument("--speed", type=float, default=DEFAULT_SPEED, help="Speech speed multiplier.")
     parser.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS, help="Max text characters per chunk.")
+    parser.add_argument("--max-phoneme-chars", type=int, default=DEFAULT_MAX_PHONEME_CHARS, help="Secondary chunk size cap to avoid phoneme truncation.")
     parser.add_argument("--silence-ms", type=int, default=DEFAULT_SILENCE_MS, help="Silence inserted between chunks.")
     parser.add_argument("--max-part-minutes", type=float, default=DEFAULT_MAX_PART_MINUTES, help="Maximum duration per output audio file.")
     parser.add_argument("--keep-chunks", action="store_true", help="Write one WAV file per chunk.")
-    parser.add_argument("--mp3-only", action="store_true", default=True, help="Write only MP3 output files and skip WAV files on disk.")
+    parser.add_argument("--mp3-only", action="store_true", default=DEFAULT_MP3_ONLY, help="Write only MP3 output files and skip WAV files on disk.")
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files.")
     parser.add_argument("--wav-to-mp3", help="Convert an existing WAV file to MP3 without rerunning TTS.")
     parser.add_argument("--mp3-bitrate", type=int, default=192, help="MP3 bitrate in kbps for WAV to MP3 conversion.")
@@ -51,11 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chapter-cache", help="Optional JSON cache with pre-extracted chapters for faster chapter jobs.")
     parser.add_argument("--output-subdir", help="Optional output subdirectory under --output-dir for chapter batch jobs.")
     parser.add_argument("--output-name", help="Optional base output name for chapter batch jobs.")
+    parser.add_argument("--md-single-chapter", action="store_true", help="Treat Markdown input as one chapter instead of splitting on headings.")
+    parser.add_argument("--max-chapter-chars", type=int, default=0, help="Maximum character count per Markdown chapter. 0 disables extra splitting.")
     parser.add_argument("--trim-mode", choices=["full", "light", "off"], default=DEFAULT_TRIM_MODE, help="Silence trimming mode.")
     parser.add_argument("--heartbeat-seconds", type=float, default=DEFAULT_HEARTBEAT_SECONDS, help="Emit periodic heartbeat lines while rendering.")
     parser.add_argument("--providers", help="Comma-separated ONNX provider priority, for example CUDAExecutionProvider,CPUExecutionProvider.")
     parser.add_argument("--temp-dir", help="Optional temp directory used by runtime dependencies such as phonemizer.")
-    parser.add_argument("--warmup-text", default="Warmup run.", help="Optional short warmup text. Empty disables warmup.")
+    parser.add_argument("--warmup-text", default=DEFAULT_WARMUP_TEXT, help="Optional short warmup text. Empty disables warmup.")
     parser.add_argument("--max-parts-per-run", type=int, default=0, help="Optional limit of closed parts per process run. 0 disables splitting.")
     return parser.parse_args()
 
@@ -208,4 +212,3 @@ def configure_onnx_provider(provider_priority: list[str] | None = None) -> str:
     resolution = resolve_provider(available=available, requested=requested_list, fallback=provider_priority)
     os.environ["ONNX_PROVIDER"] = resolution.selected
     return resolution.selected
-

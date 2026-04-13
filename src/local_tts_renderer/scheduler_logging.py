@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import re
 import threading
@@ -21,8 +22,13 @@ def timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def is_debug_enabled(flag: bool = False) -> bool:
+    env_enabled = os.environ.get("LOCAL_TTS_DEBUG", "").strip().lower() in {"1", "true", "yes", "on", "debug"}
+    return flag or env_enabled
+
+
 def debug_log(enabled: bool, message: str) -> None:
-    if not enabled:
+    if not is_debug_enabled(enabled):
         return
     print(f"[batch:debug {timestamp()}] {message}", flush=True)
 

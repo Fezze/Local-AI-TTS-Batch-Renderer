@@ -23,6 +23,17 @@ def test_clean_markdown_and_split_chapters() -> None:
     assert "`" not in chapters[0].text
 
 
+def test_split_markdown_single_chapter_and_limit() -> None:
+    text = "# One\nA\n\n# Two\nB " + ("c" * 120)
+    single = ip.split_markdown_chapters(text, fallback_title="Fallback", single_chapter=True)
+    assert len(single) == 1
+    assert single[0].title == "Fallback"
+
+    limited = ip.split_markdown_chapters(text, fallback_title="Fallback", single_chapter=True, max_chapter_chars=80)
+    assert len(limited) >= 2
+    assert limited[0].title.startswith("Fallback")
+
+
 def test_group_path_helpers_and_directory_map() -> None:
     chapters = [
         ip.Chapter(title="A", text="x", group="Book / Section"),
@@ -106,4 +117,3 @@ def test_load_chapters_markdown_and_epub() -> None:
         assert "Hello" in epub_chapters[0].text
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-

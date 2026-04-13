@@ -57,7 +57,16 @@ def main() -> int:
         f"console_controls={'off' if args.no_console_controls else 'on'}",
         flush=True,
     )
-    chapter_jobs, skipped_jobs, chapter_cache_map = build_jobs(inputs, output_dir, args.fresh, debug=args.debug)
+    chapter_jobs, skipped_jobs, chapter_cache_map = build_jobs(
+        inputs,
+        output_dir,
+        args.fresh,
+        debug=args.debug,
+        md_single_chapter=getattr(args, "md_single_chapter", False),
+        max_chapter_chars=getattr(args, "max_chapter_chars", 0),
+        max_chars=args.max_chars,
+        max_phoneme_chars=getattr(args, "max_phoneme_chars", 0),
+    )
     if not chapter_jobs:
         if skipped_jobs:
             print(f"Nothing to do. Skipped {len(skipped_jobs)} completed chapter jobs.")

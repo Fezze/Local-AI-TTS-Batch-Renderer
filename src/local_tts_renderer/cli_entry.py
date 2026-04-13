@@ -51,8 +51,18 @@ def expand_inputs(paths: list[str]) -> list[Path]:
     return unique
 
 
+def _load_chapters_for_source(source_path: Path, md_single_chapter: bool, max_chapter_chars: int):
+    try:
+        return load_chapters(source_path, single_chapter=md_single_chapter, max_chapter_chars=max_chapter_chars)
+    except TypeError:
+        return load_chapters(source_path)
+
+
 def main() -> int:
     args = parse_args()
+    md_single_chapter = getattr(args, "md_single_chapter", False)
+    max_chapter_chars = getattr(args, "max_chapter_chars", 0)
+    max_phoneme_chars = getattr(args, "max_phoneme_chars", 0)
     if args.wav_to_mp3:
         wav_path = Path(args.wav_to_mp3).resolve()
         mp3_path = wav_path.with_suffix(".mp3")
@@ -89,9 +99,9 @@ def main() -> int:
                 print(f"Source: {source_path}")
                 print_toc_tree(load_epub_toc_from_path(source_path))
             else:
-                chapters = [chapter for chapter in load_chapters(source_path) if chapter.text and chapter.text.strip()]
+                chapters = [chapter for chapter in _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars) if chapter.text and chapter.text.strip()]
                 print_chapter_summary(source_path, chapters)
-            chapters = [chapter for chapter in load_chapters(source_path) if chapter.text and chapter.text.strip()]
+            chapters = [chapter for chapter in _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars) if chapter.text and chapter.text.strip()]
             print_output_structure_preview(source_path, chapters)
         return 0
 
@@ -139,9 +149,9 @@ def main() -> int:
                 chapters = load_chapters_from_cache(cache_path)
                 debug_trace(f"load_chapters:cache_done path={cache_path} chapters={len(chapters)}")
             else:
-                chapters = load_chapters(source_path)
+                chapters = _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars)
         else:
-            chapters = load_chapters(source_path)
+            chapters = _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars)
         chapters = [chapter for chapter in chapters if chapter.text and chapter.text.strip()]
         if not chapters:
             print(f"Skipped {source_path}: no readable chapters after cleaning.", file=sys.stderr)
@@ -188,6 +198,7 @@ def main() -> int:
                     trim_mode=args.trim_mode,
                     speed=args.speed,
                     max_chars=args.max_chars,
+                    max_phoneme_chars=max_phoneme_chars,
                     silence_ms=args.silence_ms,
                     max_part_minutes=args.max_part_minutes,
                     keep_chunks=args.keep_chunks,
@@ -216,6 +227,7 @@ def main() -> int:
                 trim_mode=args.trim_mode,
                 speed=args.speed,
                 max_chars=args.max_chars,
+                max_phoneme_chars=max_phoneme_chars,
                 silence_ms=args.silence_ms,
                 max_part_minutes=args.max_part_minutes,
                 keep_chunks=args.keep_chunks,
@@ -229,4 +241,3 @@ def main() -> int:
             return 75
         print(json.dumps({"source": str(source_path), "output_parts": manifest["parts"], "chunks": manifest["chunk_count"], "voice": manifest["voice"]}), flush=True)
     return 0
-

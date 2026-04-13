@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import py_compile
 import tempfile
 from pathlib import Path
 
@@ -77,6 +78,25 @@ def check_temp_dir() -> tuple[bool, str]:
         return False, f"temp_not_writable={base} error={exc!r}"
 
 
+def check_py_compile(root: Path) -> tuple[bool, list[str]]:
+    targets = [
+        root / "md_to_audio.py",
+        root / "run_tts_batch.py",
+    ]
+    targets.extend(sorted((root / "src" / "local_tts_renderer").rglob("*.py")))
+    failures: list[str] = []
+    for path in targets:
+        if not path.exists():
+            continue
+        try:
+            py_compile.compile(str(path), doraise=True)
+        except py_compile.PyCompileError as exc:
+            failures.append(f"{path}: {exc.msg}")
+    ok = not failures
+    messages = failures if failures else [f"compiled={len(targets)}"]
+    return ok, messages
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Preflight checks for Local AI TTS Batch Renderer.")
     parser.add_argument("--output-dir", default="out")
@@ -99,6 +119,9 @@ def main() -> int:
 
     tmp_ok, tmp_msg = check_temp_dir()
     checks.append(("temp", tmp_ok, [tmp_msg]))
+
+    compile_ok, compile_msgs = check_py_compile(Path(__file__).resolve().parents[1])
+    checks.append(("py_compile", compile_ok, compile_msgs))
 
     overall_ok = all(item[1] for item in checks)
     for name, ok, msgs in checks:

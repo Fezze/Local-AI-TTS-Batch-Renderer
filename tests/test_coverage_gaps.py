@@ -99,6 +99,48 @@ def test_cli_entry_expand_inputs_and_main_branches(monkeypatch) -> None:
     assert cli_entry.main() == 0
 
 
+def test_cli_entry_md_flags(monkeypatch) -> None:
+    source = _scratch_dir("md-flags") / "doc.md"
+    source.write_text("# A\none\n\n# B\ntwo", encoding="utf-8")
+    out_dir = _scratch_dir("md-flags-out")
+    seen: list[list[Chapter]] = []
+
+    monkeypatch.setattr(cli_entry, "parse_args", lambda: argparse.Namespace(
+        wav_to_mp3=None,
+        input=[str(source)],
+        output_dir=str(out_dir),
+        list_chapters=False,
+        model_dir="models",
+        voice="v",
+        lang="en",
+        speed=1.0,
+        max_chars=100,
+        silence_ms=50,
+        max_part_minutes=1.0,
+        keep_chunks=False,
+        mp3_only=True,
+        force=False,
+        chapter_index=None,
+        chapter_cache=None,
+        output_subdir=None,
+        output_name=None,
+        md_single_chapter=True,
+        max_chapter_chars=0,
+        trim_mode="off",
+        heartbeat_seconds=0.0,
+        providers=None,
+        temp_dir=None,
+        warmup_text="",
+        max_parts_per_run=0,
+    ))
+    monkeypatch.setattr(cli_entry, "load_chapters", lambda path, **kwargs: seen.append([Chapter(title="Whole", text="x", group=None)]) or seen[-1])
+    monkeypatch.setattr(cli_entry, "build_group_directory_map", lambda chapters: {})
+    monkeypatch.setattr(cli_entry, "render_audio", lambda **kwargs: {"parts": [], "chunk_count": 1, "voice": "v"})
+    monkeypatch.setattr(cli_entry, "extract_epub_metadata", lambda path: AudioMetadata(source_title="s"))
+    assert cli_entry.main() == 0
+    assert seen
+
+
 def test_cli_entry_list_and_partial_branches(monkeypatch) -> None:
     source = _scratch_dir("entry-source") / "doc.md"
     source.write_text("# A\nbody", encoding="utf-8")
@@ -325,7 +367,7 @@ def test_scheduler_process_controls(monkeypatch) -> None:
                     if isinstance(cell.cell_contents, threading.Event):
                         stop_event = cell.cell_contents
                         break
-            worker = real_thread_cls(target=self.target)
+            worker = real_thread_cls(target=self.target, daemon=True)
             worker.start()
             if stop_event is None:
                 worker.join(timeout=2)
@@ -345,3 +387,47 @@ def test_scheduler_process_controls(monkeypatch) -> None:
     stop_event, thread = scheduler_process.start_console_controls(cond, workers, enabled=True)
     assert thread is not None
     assert calls
+
+
+def test_scheduler_process_debug_toggle(monkeypatch) -> None:
+    real_thread_cls = threading.Thread
+    monkeypatch.setattr(scheduler_process.os, "name", "nt", raising=False)
+    monkeypatch.delenv("LOCAL_TTS_DEBUG", raising=False)
+
+    class FakeMsvcrt:
+        seq = iter(["d"])
+
+        @staticmethod
+        def kbhit():
+            return True
+
+        @staticmethod
+        def getwch():
+            return next(FakeMsvcrt.seq, "")
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+
+        def start(self):
+            worker = real_thread_cls(target=self.target, daemon=True)
+            worker.start()
+            import time as _time
+
+            _time.sleep(0.02)
+            worker_event = None
+            if self.target.__closure__:
+                for cell in self.target.__closure__:
+                    if isinstance(cell.cell_contents, threading.Event):
+                        worker_event = cell.cell_contents
+                        break
+            if worker_event is not None:
+                worker_event.set()
+            worker.join(timeout=2)
+
+    monkeypatch.setitem(sys.modules, "msvcrt", FakeMsvcrt)
+    monkeypatch.setattr(scheduler_process.threading, "Thread", FakeThread)
+    cond = threading.Condition()
+    stop_event, thread = scheduler_process.start_console_controls(cond, [WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider")], enabled=True)
+    assert thread is not None
+    assert "LOCAL_TTS_DEBUG" in os.environ

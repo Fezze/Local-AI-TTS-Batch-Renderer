@@ -21,6 +21,7 @@ from .scheduler_logging import (
     PROGRESS_RE,
     append_runner_log,
     debug_log,
+    is_debug_enabled,
     parse_heartbeat_line,
     print_batch_summary,
     print_worker_progress,
@@ -192,7 +193,7 @@ def run_worker(
                                 f"idle={idle_seconds:.1f}s timeout={effective_timeout:.1f}s",
                                 flush=True,
                             )
-                            if args.debug:
+                            if is_debug_enabled(args.debug):
                                 debug_log(
                                     True,
                                     f"worker_waiting worker={worker.name} chapter={job.chapter_index} "
@@ -266,7 +267,7 @@ def run_worker(
                         saw_cuda_error = True
                     handle.write(line)
                     handle.flush()
-                    if args.debug:
+                    if is_debug_enabled(args.debug):
                         debug_log(True, f"worker_stdout worker={worker.name} line={line.strip()}")
                     heartbeat_payload = parse_heartbeat_line(line)
                     if heartbeat_payload is not None:

@@ -17,6 +17,11 @@ from local_tts_renderer.input_parsers import (
     slugify,
 )
 
+from .defaults import (
+    DEFAULT_CPU_MAX_CHARS,
+    DEFAULT_GPU_LARGE_CHAPTER_ESTIMATED_CHUNKS,
+    DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS,
+)
 from .scheduler_logging import debug_log
 from .scheduler_types import (
     CPU_IDLE_STEP_SECONDS,
@@ -76,7 +81,17 @@ def is_job_complete(output_dir: Path, job: ChapterJob) -> bool:
     return True
 
 
-def build_jobs(inputs: list[Path], output_dir: Path, fresh: bool, debug: bool = False) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
+def build_jobs(
+    inputs: list[Path],
+    output_dir: Path,
+    fresh: bool,
+    debug: bool = False,
+    *,
+    md_single_chapter: bool = False,
+    max_chapter_chars: int = 0,
+    max_chars: int = DEFAULT_MAX_CHARS,
+    max_phoneme_chars: int = 0,
+) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
     jobs: list[ChapterJob] = []
     skipped: list[ChapterJob] = []
     chapter_cache_map: dict[Path, Path] = {}
@@ -86,7 +101,11 @@ def build_jobs(inputs: list[Path], output_dir: Path, fresh: bool, debug: bool = 
         source_started = time.time()
         print(f"[batch:scan] source_start path={source_path}", flush=True)
         chapters_load_started = time.time()
-        chapters = [chapter for chapter in load_chapters(source_path) if chapter.text and chapter.text.strip()]
+        try:
+            source_chapters = load_chapters(source_path, single_chapter=md_single_chapter, max_chapter_chars=max_chapter_chars)
+        except TypeError:
+            source_chapters = load_chapters(source_path)
+        chapters = [chapter for chapter in source_chapters if chapter.text and chapter.text.strip()]
         cache_key = re_slug(str(source_path))
         cache_path = cache_root / f"{cache_key}.json"
         cache_payload = [
@@ -146,7 +165,10 @@ def build_jobs(inputs: list[Path], output_dir: Path, fresh: bool, debug: bool = 
                 f"job_candidate source={source_path.name} chapter_index={chapter_index} "
                 f"subdir={output_subdir} output_name={output_name}",
             )
-            estimated_chunks = max(1, (len(chapter.text) + DEFAULT_MAX_CHARS - 1) // DEFAULT_MAX_CHARS)
+            effective_max_chars = max_chars
+            if max_phoneme_chars > 0:
+                effective_max_chars = min(effective_max_chars, max_phoneme_chars)
+            estimated_chunks = max(1, (len(chapter.text) + effective_max_chars - 1) // effective_max_chars)
             job = ChapterJob(
                 source_path=source_path,
                 chapter_index=chapter_index,
@@ -182,11 +204,11 @@ def choose_worker_max_chars(worker: WorkerConfig, job: ChapterJob, args: argpars
         if is_short_section_title(job.chapter_title):
             base = int(base * 1.2)
         return max(350, int(base * retry_shrink))
-    if job.estimated_chunks >= 12 or job.estimated_chars >= 12000:
+    if job.estimated_chunks >= DEFAULT_GPU_LARGE_CHAPTER_ESTIMATED_CHUNKS or job.estimated_chars >= DEFAULT_CPU_MAX_CHARS:
         base = args.gpu_large_chapter_max_chars
     else:
         base = args.gpu_small_chapter_max_chars
-    return max(450, int(base * retry_shrink))
+    return max(DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS, int(base * retry_shrink))
 
 
 def build_worker_command(
@@ -231,6 +253,8 @@ def build_worker_command(
         "--warmup-text",
         args.warmup_text,
     ]
+    if getattr(args, "max_phoneme_chars", 0) > 0:
+        command.extend(["--max-phoneme-chars", str(args.max_phoneme_chars)])
     if cache_path is not None:
         command.extend(["--chapter-cache", str(cache_path)])
     if args.force:

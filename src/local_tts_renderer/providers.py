@@ -3,12 +3,7 @@
 from dataclasses import dataclass
 from typing import Iterable
 
-DEFAULT_PROVIDER_PRIORITY = [
-    "CUDAExecutionProvider",
-    "DmlExecutionProvider",
-    "ROCMExecutionProvider",
-    "CPUExecutionProvider",
-]
+from .defaults import DEFAULT_PROVIDER_PRIORITY
 
 GPU_PROVIDER_NAMES = {
     "CUDAExecutionProvider",

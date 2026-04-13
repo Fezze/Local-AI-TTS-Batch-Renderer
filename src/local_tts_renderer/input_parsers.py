@@ -80,7 +80,40 @@ def clean_plain_text(text: str) -> str:
     return text.strip()
 
 
-def split_markdown_chapters(text: str, fallback_title: str) -> list[Chapter]:
+def _split_text_by_limit(text: str, max_length: int) -> list[str]:
+    if max_length <= 0 or len(text) <= max_length:
+        return [text]
+    parts: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + max_length)
+        if end < len(text):
+            split_at = text.rfind("\n\n", start, end)
+            if split_at == -1 or split_at <= start:
+                split_at = text.rfind(" ", start, end)
+            if split_at == -1 or split_at <= start:
+                split_at = end
+            else:
+                split_at += 2 if text[split_at:split_at + 2] == "\n\n" else 1
+            end = split_at
+        chunk = text[start:end].strip()
+        if chunk:
+            parts.append(chunk)
+        start = end
+        while start < len(text) and text[start].isspace():
+            start += 1
+    return parts or [text]
+
+
+def split_markdown_chapters(text: str, fallback_title: str, *, single_chapter: bool = False, max_chapter_chars: int = 0) -> list[Chapter]:
+    if single_chapter:
+        cleaned = clean_markdown(text)
+        if max_chapter_chars > 0 and len(cleaned) > max_chapter_chars:
+            return [
+                Chapter(title=fallback_title if index == 1 else f"{fallback_title} {index}", text=part)
+                for index, part in enumerate(_split_text_by_limit(cleaned, max_chapter_chars), start=1)
+            ]
+        return [Chapter(title=fallback_title, text=cleaned)]
     lines = text.replace("\r\n", "\n").splitlines()
     chapters: list[Chapter] = []
     current_title: str | None = None
@@ -100,6 +133,16 @@ def split_markdown_chapters(text: str, fallback_title: str) -> list[Chapter]:
         chapter_text = clean_markdown("\n".join(current_lines))
         if chapter_text:
             chapters.append(Chapter(title=current_title or fallback_title, text=chapter_text))
+    if max_chapter_chars > 0:
+        split_chapters: list[Chapter] = []
+        for chapter in chapters or [Chapter(title=fallback_title, text=clean_markdown(text))]:
+            pieces = _split_text_by_limit(chapter.text, max_chapter_chars)
+            if len(pieces) == 1:
+                split_chapters.append(chapter)
+                continue
+            for index, piece in enumerate(pieces, start=1):
+                split_chapters.append(Chapter(title=f"{chapter.title} {index}", text=piece))
+        return split_chapters
     return chapters or [Chapter(title=fallback_title, text=clean_markdown(text))]
 
 
@@ -265,11 +308,11 @@ def extract_epub_chapters_dynamic(path: Path) -> list[Chapter]:
     return chapters
 
 
-def load_chapters(source_path: Path) -> list[Chapter]:
+def load_chapters(source_path: Path, *, single_chapter: bool = False, max_chapter_chars: int = 0) -> list[Chapter]:
     if source_path.suffix.lower() == ".epub":
         return extract_epub_chapters_dynamic(source_path)
     raw_text = source_path.read_text(encoding="utf-8")
-    return split_markdown_chapters(raw_text, fallback_title=source_path.stem)
+    return split_markdown_chapters(raw_text, fallback_title=source_path.stem, single_chapter=single_chapter, max_chapter_chars=max_chapter_chars)
 
 
 def build_chapter_number_map(chapters: list[Chapter]) -> dict[int, int]:
