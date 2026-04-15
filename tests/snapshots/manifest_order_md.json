@@ -1,0 +1,47 @@
+{
+  "source": "out",
+  "voice": "voice_a",
+  "lang": "en-us",
+  "speed": 1.0,
+  "sample_rate": 24000,
+  "chapter_count": 3,
+  "chunk_count": 3,
+  "max_part_minutes": 10.0,
+  "parts": [
+    {
+      "part": 1,
+      "duration_seconds": 3.0,
+      "group": null,
+      "chapter_titles": [
+        "One",
+        "Two",
+        "Three"
+      ],
+      "start_chunk": 1,
+      "end_chunk": 3
+    }
+  ],
+  "chunks": [
+    {
+      "index": 1,
+      "heading": "One",
+      "chapter": "One",
+      "chars": 1,
+      "text": "A"
+    },
+    {
+      "index": 2,
+      "heading": "Two",
+      "chapter": "Two",
+      "chars": 1,
+      "text": "B"
+    },
+    {
+      "index": 3,
+      "heading": "Three",
+      "chapter": "Three",
+      "chars": 1,
+      "text": "C"
+    }
+  ]
+}

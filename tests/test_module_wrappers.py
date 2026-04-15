@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import local_tts_renderer as root_mod
 from local_tts_renderer import chunking, render
 
@@ -29,3 +33,17 @@ def test_chunking_and_render_wrappers_delegate(monkeypatch) -> None:
     assert render.render_audio() == {"ok": True}
     assert render.write_mp3_from_audio(None, 0, None, 0, False) == "mp3a"
     assert render.write_mp3_from_wav(None, None, 0, False) == "mp3w"
+
+
+def test_top_level_scripts_bootstrap_src_path() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    for script_name in ("md_to_audio.py", "run_tts_batch.py"):
+        result = subprocess.run(
+            [sys.executable, script_name, "--help"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0
+        assert "usage:" in result.stdout.lower()

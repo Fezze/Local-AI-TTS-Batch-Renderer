@@ -8,7 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from local_tts_renderer import cli, cli_render_flow, input_parsers as ip
+from local_tts_renderer import cli_core, cli_render_flow, input_parsers as ip
+from local_tts_renderer.cli_models import AudioMetadata
 
 
 def _mk_tmp_dir() -> Path:
@@ -21,6 +22,40 @@ def _fake_audio(**kwargs):  # type: ignore[no-untyped-def]
     return [np.zeros(24000, dtype=np.float32)], 24000
 
 
+def _canonical_manifest(manifest: dict) -> dict:
+    return {
+        "source": manifest["source"],
+        "voice": manifest["voice"],
+        "lang": manifest["lang"],
+        "speed": manifest["speed"],
+        "sample_rate": manifest["sample_rate"],
+        "chapter_count": manifest["chapter_count"],
+        "chunk_count": manifest["chunk_count"],
+        "max_part_minutes": manifest["max_part_minutes"],
+        "parts": [
+            {
+                "part": part["part"],
+                "duration_seconds": part["duration_seconds"],
+                "group": part["group"],
+                "chapter_titles": part["chapter_titles"],
+                "start_chunk": part["start_chunk"],
+                "end_chunk": part["end_chunk"],
+            }
+            for part in manifest["parts"]
+        ],
+        "chunks": [
+            {
+                "index": chunk["index"],
+                "heading": chunk["heading"],
+                "chapter": chunk["chapter"],
+                "chars": chunk["chars"],
+                "text": chunk["text"],
+            }
+            for chunk in manifest["chunks"]
+        ],
+    }
+
+
 def test_render_audio_manifest_order_from_markdown(monkeypatch) -> None:
     monkeypatch.setattr(cli_render_flow, "CREATE_AUDIO_WITH_RETRY", _fake_audio)
 
@@ -31,7 +66,7 @@ def test_render_audio_manifest_order_from_markdown(monkeypatch) -> None:
         chapters = ip.load_chapters(md_path)
 
         output_root = tmp / "out"
-        manifest = cli.render_audio(
+        manifest = cli_core.render_audio(
             kokoro=object(),
             chapters=chapters,
             base_output_dir=tmp,
@@ -47,14 +82,14 @@ def test_render_audio_manifest_order_from_markdown(monkeypatch) -> None:
             keep_chunks=False,
             mp3_only=True,
             force=True,
-            audio_metadata=cli.AudioMetadata(source_title="Book"),
+            audio_metadata=AudioMetadata(source_title="Book"),
             heartbeat_seconds=0.0,
         )
 
         saved = json.loads((output_root.with_suffix(".json")).read_text(encoding="utf-8"))
-        assert [chunk["chapter"] for chunk in manifest["chunks"]] == ["One", "Two", "Three"]
-        assert [chunk["chapter"] for chunk in saved["chunks"]] == ["One", "Two", "Three"]
-        assert [part["part"] for part in saved["parts"]] == [1]
+        expected = json.loads((Path(__file__).parent / "snapshots" / "manifest_order_md.json").read_text(encoding="utf-8"))
+        assert _canonical_manifest(manifest) == expected
+        assert _canonical_manifest(saved) == expected
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -106,7 +141,7 @@ def test_render_audio_manifest_order_from_epub(monkeypatch) -> None:
 
         chapters = ip.load_chapters(epub_path)
         output_root = tmp / "out"
-        manifest = cli.render_audio(
+        manifest = cli_core.render_audio(
             kokoro=object(),
             chapters=chapters,
             base_output_dir=tmp,
@@ -122,12 +157,13 @@ def test_render_audio_manifest_order_from_epub(monkeypatch) -> None:
             keep_chunks=False,
             mp3_only=True,
             force=True,
-            audio_metadata=cli.AudioMetadata(source_title="Book"),
+            audio_metadata=AudioMetadata(source_title="Book"),
             heartbeat_seconds=0.0,
         )
 
         saved = json.loads((output_root.with_suffix(".json")).read_text(encoding="utf-8"))
-        assert [chunk["chapter"] for chunk in manifest["chunks"]] == ["Part One", "Part Two"]
-        assert [chunk["chapter"] for chunk in saved["chunks"]] == ["Part One", "Part Two"]
+        expected = json.loads((Path(__file__).parent / "snapshots" / "manifest_order_epub.json").read_text(encoding="utf-8"))
+        assert _canonical_manifest(manifest) == expected
+        assert _canonical_manifest(saved) == expected
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

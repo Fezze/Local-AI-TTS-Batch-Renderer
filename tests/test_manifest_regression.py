@@ -7,7 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
-from local_tts_renderer import cli, cli_render_flow
+from local_tts_renderer import cli_core, cli_render_flow
+from local_tts_renderer.cli_models import AudioMetadata
+from local_tts_renderer.input_parsers import Chapter
 
 
 def _mk_tmp_dir() -> Path:
@@ -23,13 +25,13 @@ def test_render_audio_manifest_preserves_chunk_order(monkeypatch) -> None:
     monkeypatch.setattr(cli_render_flow, "CREATE_AUDIO_WITH_RETRY", fake_create_audio_with_retry)
 
     chapters = [
-        cli.Chapter(title="Alpha", text="One two three. Four five six.", group=None),
-        cli.Chapter(title="Beta", text="Seven eight nine. Ten eleven twelve.", group=None),
+        Chapter(title="Alpha", text="One two three. Four five six.", group=None),
+        Chapter(title="Beta", text="Seven eight nine. Ten eleven twelve.", group=None),
     ]
     tmp_path = _mk_tmp_dir()
     try:
         output_root = tmp_path / "doc"
-        manifest = cli.render_audio(
+        manifest = cli_core.render_audio(
             kokoro=object(),
             chapters=chapters,
             base_output_dir=tmp_path,
@@ -45,7 +47,7 @@ def test_render_audio_manifest_preserves_chunk_order(monkeypatch) -> None:
             keep_chunks=False,
             mp3_only=True,
             force=True,
-            audio_metadata=cli.AudioMetadata(source_title="Test Source"),
+            audio_metadata=AudioMetadata(source_title="Test Source"),
             heartbeat_seconds=0.0,
             final_stem_override="01-Test Source",
             max_parts_per_run=0,

@@ -1,0 +1,39 @@
+{
+  "source": "out",
+  "voice": "voice_a",
+  "lang": "en-us",
+  "speed": 1.0,
+  "sample_rate": 24000,
+  "chapter_count": 2,
+  "chunk_count": 2,
+  "max_part_minutes": 10.0,
+  "parts": [
+    {
+      "part": 1,
+      "duration_seconds": 2.0,
+      "group": null,
+      "chapter_titles": [
+        "Part One",
+        "Part Two"
+      ],
+      "start_chunk": 1,
+      "end_chunk": 2
+    }
+  ],
+  "chunks": [
+    {
+      "index": 1,
+      "heading": "Part One",
+      "chapter": "Part One",
+      "chars": 5,
+      "text": "One\nA"
+    },
+    {
+      "index": 2,
+      "heading": "Part Two",
+      "chapter": "Part Two",
+      "chars": 5,
+      "text": "Two\nB"
+    }
+  ]
+}

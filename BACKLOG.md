@@ -4,13 +4,13 @@ Szczegoly i pelny kontekst dla ponizszych pozycji sa w [local_tts_renderer_revie
 
 ## P0
 
-- [ ] Rozszerzyc testy snapshot/regression dla manifestow i kolejnosci chunkow/rozdzialow na fixture `md` i `epub`.
+- [x] Rozszerzyc testy snapshot/regression dla manifestow i kolejnosci chunkow/rozdzialow na fixture `md` i `epub`.
 - [ ] Dokonczyc rozdzial `cli_parsing` od `input_parsers` tak, zeby cache, prezentacja i parsowanie byly rozdzielone bez cienkich re-exportow. `cli_cache.py` i `cli_presentation.py` sa juz wydzielone, zostalo doczyszczenie resztek fasad/importow.
 - [ ] Usunac pozostaly barrel w `cli_core.py` i zastapic go jawnymi eksportami lub tymczasowymi shimami o waskim zakresie.
 - [ ] Domknac pozostale zaleznosci CLI w render/audio flow, zwlaszcza tam gdzie nadal sa punkty wstrzykniecia oparte o fasady.
-- [ ] Uporzadkowac `scheduler_core.py` tak, zeby byl composition root, a nie logic owner.
+- [ ] Uporzadkowac `scheduler_core.py` tak, zeby byl composition root, a nie logic owner. `scheduler_setup.py` juz wydziela budowe runtime, zostalo dalsze odchudzenie glownej petli.
 - [ ] Ujednolicic wewnetrzny styl importow na relatywny tam, gdzie to mozliwe.
-- [x] Zastapic top-level `sys.path` bootstrap entrypointow pakietowymi entrypointami z metadanych pakietu.
+- [x] Zastapic top-level `sys.path` bootstrap entrypointow pakietowymi entrypointami z metadanych pakietu. Dodatkowo zostal minimalny bootstrap tylko w `md_to_audio.py` i `run_tts_batch.py` dla bezposredniego uruchamiania skryptow.
 
 ## P1
 

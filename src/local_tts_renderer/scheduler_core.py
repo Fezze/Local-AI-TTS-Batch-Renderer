@@ -2,56 +2,24 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
 import threading
 import time
 from pathlib import Path
 
-from .input_parsers import slugify
-from .providers import build_worker_provider_list, parse_provider_priority, probe_available_providers
 from .scheduler_args import expand_inputs, parse_args
+from .providers import build_worker_provider_list, parse_provider_priority, probe_available_providers
 from .scheduler_jobs import (
     build_jobs,
-    build_worker_command,
-    choose_worker_max_chars,
-    cpu_allowed_chunk_budget,
     prepare_worker_temp_dirs,
-    select_next_job,
 )
-from .scheduler_logging import (
-    append_runner_log,
-    debug_log,
-    print_batch_summary,
-    resolve_worker_silence_timeout,
-    timestamp,
-    update_worker_phase,
-)
+from .scheduler_logging import append_runner_log, debug_log, timestamp
 from .scheduler_process import (
     start_console_controls,
     terminate_all_active_processes,
 )
 from .scheduler_runtime import run_worker
-from .scheduler_types import WorkerConfig, WorkerStatus, ChapterJob
-
-
-def _build_worker_configs(worker_providers: list[str]) -> list[WorkerConfig]:
-    workers: list[WorkerConfig] = []
-    gpu_index = 0
-    cpu_index = 0
-    for provider in worker_providers:
-        if provider == "CPUExecutionProvider":
-            cpu_index += 1
-            workers.append(WorkerConfig(name=f"cpu-{cpu_index}", provider=provider))
-        else:
-            gpu_index += 1
-            workers.append(WorkerConfig(name=f"gpu-{gpu_index}", provider=provider))
-    return workers
-
-
-def _log_runtime_context(args, worker_providers: list[str], workers: list[WorkerConfig], runner_log: Path, run_tmp_root: Path) -> None:
-    print(f"[batch:workers] {', '.join(f'{w.name}:{w.provider}' for w in workers)}", flush=True)
-    print(f"[batch:runtime] runner_log={runner_log} tmp_root={run_tmp_root}", flush=True)
-    debug_log(args.debug, f"provider_order_resolved={worker_providers}")
+from .scheduler_setup import log_scheduler_runtime, prepare_scheduler_runtime
+from .scheduler_types import WorkerStatus
 
 
 def main() -> int:
@@ -94,26 +62,12 @@ def main() -> int:
         return 2
     print(f"[batch:plan] chapter_jobs={len(chapter_jobs)} skipped_completed={len(skipped_jobs)}", flush=True)
 
-    python_exe = Path(sys.executable).resolve()
-    script_path = Path(__file__).resolve().parents[2] / "md_to_audio.py"
-    runner_log = (output_dir / slugify(inputs[0].stem) / "runner.jsonl") if len(inputs) == 1 else (output_dir / "runner.jsonl")
-    provider_priority = parse_provider_priority(args.providers)
-    available_providers = probe_available_providers()
-    print(
-        f"[batch:providers] available_probe=runtime priority={provider_priority}",
-        flush=True,
-    )
-    debug_log(args.debug, f"provider_probe_runtime_available={available_providers}")
-    worker_providers = build_worker_provider_list(
-        available=available_providers,
-        gpu_workers=args.gpu_workers,
-        cpu_workers=args.cpu_workers,
-        provider_priority=provider_priority,
-    )
-    workers = _build_worker_configs(worker_providers)
-    run_tmp_root, worker_temp_dirs = prepare_worker_temp_dirs(workers)
-    debug_log(args.debug, f"python_exe={python_exe} script_path={script_path}")
-    _log_runtime_context(args, worker_providers, workers, runner_log, run_tmp_root)
+    runtime = prepare_scheduler_runtime(args, inputs, output_dir)
+    workers = runtime.workers
+    runner_log = runtime.runner_log
+    run_tmp_root = runtime.run_tmp_root
+    worker_temp_dirs = runtime.worker_temp_dirs
+    log_scheduler_runtime(args, runtime)
 
     append_runner_log(
         runner_log,
@@ -148,7 +102,7 @@ def main() -> int:
     threads = [
         threading.Thread(
             target=run_worker,
-            args=(worker, pending_jobs, args, runner_log, python_exe, script_path, len(chapter_jobs), total_chunks, statuses, counters, scheduler_condition, batch_started_at, worker_temp_dirs, chapter_cache_map, gpu_bootstrap_lock),
+            args=(worker, pending_jobs, args, runner_log, runtime.python_exe, runtime.script_path, len(chapter_jobs), total_chunks, statuses, counters, scheduler_condition, batch_started_at, worker_temp_dirs, chapter_cache_map, gpu_bootstrap_lock),
             daemon=True,
         )
         for worker in workers
@@ -192,3 +146,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+__all__ = ["main"]
