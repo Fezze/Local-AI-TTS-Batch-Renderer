@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from .cli_audio_utils import create_audio_with_retry, write_mp3_from_wav
-from .cli_models import AudioMetadata, PartialRunComplete
+from .cli_models import PartialRunComplete
 from .cli_parsing import (
     Chapter,
     build_chapter_number_map,
@@ -16,12 +16,14 @@ from .cli_parsing import (
     load_chapters,
     load_chapters_from_cache,
     load_epub_toc_from_path,
+)
+from .cli_presentation import (
     print_chapter_summary,
     print_output_structure_preview,
     print_toc_tree,
-    sanitize_filename_component,
-    slugify,
 )
+from .cli_parsing import sanitize_filename_component, slugify
+from .cli_models import AudioMetadata
 from .cli_render_flow import render_audio
 from .cli_runtime import (
     configure_onnx_provider,
@@ -97,11 +99,12 @@ def main() -> int:
         for source_path in inputs:
             if source_path.suffix.lower() == ".epub":
                 print(f"Source: {source_path}")
-                print_toc_tree(load_epub_toc_from_path(source_path))
+                toc = load_epub_toc_from_path(source_path)
+                print_toc_tree(toc)
+                chapters = [chapter for chapter in _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars) if chapter.text and chapter.text.strip()]
             else:
                 chapters = [chapter for chapter in _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars) if chapter.text and chapter.text.strip()]
                 print_chapter_summary(source_path, chapters)
-            chapters = [chapter for chapter in _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars) if chapter.text and chapter.text.strip()]
             print_output_structure_preview(source_path, chapters)
         return 0
 

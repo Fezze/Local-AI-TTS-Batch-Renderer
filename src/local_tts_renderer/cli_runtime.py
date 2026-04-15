@@ -44,7 +44,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--silence-ms", type=int, default=DEFAULT_SILENCE_MS, help="Silence inserted between chunks.")
     parser.add_argument("--max-part-minutes", type=float, default=DEFAULT_MAX_PART_MINUTES, help="Maximum duration per output audio file.")
     parser.add_argument("--keep-chunks", action="store_true", help="Write one WAV file per chunk.")
-    parser.add_argument("--mp3-only", action="store_true", default=DEFAULT_MP3_ONLY, help="Write only MP3 output files and skip WAV files on disk.")
+    parser.add_argument(
+        "--mp3-only",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_MP3_ONLY,
+        help="Write only MP3 output files and skip WAV files on disk.",
+    )
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files.")
     parser.add_argument("--wav-to-mp3", help="Convert an existing WAV file to MP3 without rerunning TTS.")
     parser.add_argument("--mp3-bitrate", type=int, default=192, help="MP3 bitrate in kbps for WAV to MP3 conversion.")

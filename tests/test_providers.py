@@ -1,4 +1,6 @@
-﻿from local_tts_renderer.providers import build_worker_provider_list, resolve_provider
+import sys
+
+from local_tts_renderer.providers import build_worker_provider_list, probe_available_providers, resolve_provider
 
 
 def test_resolve_provider_prefers_requested_order() -> None:
@@ -24,3 +26,8 @@ def test_build_worker_provider_list_gpu_and_cpu() -> None:
         cpu_workers=1,
     )
     assert providers == ["CUDAExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_probe_available_providers_falls_back_to_cpu(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+    assert probe_available_providers() == ["CPUExecutionProvider"]

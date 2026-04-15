@@ -25,6 +25,15 @@ def test_parse_args_minimal(monkeypatch) -> None:
     assert args.input == ["neutral.md"]
 
 
+def test_parse_args_allows_disabling_mp3_only(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["md_to_audio.py", "--input", "neutral.md", "--no-mp3-only"],
+    )
+    args = cli.parse_args()
+    assert args.mp3_only is False
+
+
 def test_text_processing_helpers() -> None:
     md = "# Intro\nHello [x](https://e) `code`"
     cleaned = cli.clean_markdown(md)
@@ -149,3 +158,41 @@ def test_output_part_writer_close(monkeypatch) -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+
+def test_output_part_writer_fails_fast_when_output_exists(monkeypatch) -> None:
+    tmp = _mk_tmp_dir()
+    try:
+        monkeypatch.setattr(cli, "write_mp3_tags", lambda *a, **k: None)
+        out_root = tmp / "book" / "04-Neutral Chapter"
+        _, mp3_path = cli.compute_part_output_paths(
+            output_root=out_root,
+            base_output_dir=tmp,
+            part_index=1,
+            multi_part=False,
+            base_name="04-Neutral Chapter",
+            group_name=None,
+            final_stem_override="04-Neutral Chapter",
+        )
+        mp3_path.parent.mkdir(parents=True, exist_ok=True)
+        mp3_path.write_bytes(b"existing")
+        calls: list[Path] = []
+        monkeypatch.setattr(cli, "safe_remove_path", lambda path: calls.append(path) or True)
+        try:
+            cli.OutputPartWriter(
+                output_root=out_root,
+                base_output_dir=tmp,
+                part_index=1,
+                multi_part=False,
+                sample_rate=24000,
+                force=False,
+                group_name=None,
+                audio_metadata=cli.AudioMetadata(source_title="Neutral Source"),
+                mp3_only=True,
+                final_stem_override="04-Neutral Chapter",
+            )
+            raise AssertionError("expected FileExistsError")
+        except FileExistsError:
+            pass
+        assert calls == []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

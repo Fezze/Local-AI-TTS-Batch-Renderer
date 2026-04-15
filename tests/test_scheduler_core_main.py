@@ -59,6 +59,17 @@ def test_scheduler_main_no_inputs_returns_2(monkeypatch) -> None:
     assert core.main() == 2
 
 
+def test_scheduler_args_allow_disabling_mp3_only(monkeypatch) -> None:
+    from local_tts_renderer import scheduler_args
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["scheduler.py", "--input", "dummy.md", "--no-mp3-only"],
+    )
+    args = scheduler_args.parse_args()
+    assert args.mp3_only is False
+
+
 def test_scheduler_main_happy_path(monkeypatch) -> None:
     tmp = _mk_tmp_dir()
     try:
@@ -81,6 +92,7 @@ def test_scheduler_main_happy_path(monkeypatch) -> None:
         monkeypatch.setattr(core, "expand_inputs", lambda _items: [source])
         monkeypatch.setattr(core, "build_jobs", lambda *_a, **_k: ([job], [], {source: tmp / "cache.json"}))
         monkeypatch.setattr(core, "parse_provider_priority", lambda _p: ["CUDAExecutionProvider", "CPUExecutionProvider"])
+        monkeypatch.setattr(core, "probe_available_providers", lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"])
         monkeypatch.setattr(core, "build_worker_provider_list", lambda **_k: ["CUDAExecutionProvider", "CPUExecutionProvider"])
         monkeypatch.setattr(core, "prepare_worker_temp_dirs", lambda workers: (tmp / "tmp-root", {w.name: tmp / "tmp-root" / w.name for w in workers}))
         monkeypatch.setattr(core, "append_runner_log", lambda *_a, **_k: None)
@@ -96,4 +108,3 @@ def test_scheduler_main_happy_path(monkeypatch) -> None:
         assert core.main() == 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-

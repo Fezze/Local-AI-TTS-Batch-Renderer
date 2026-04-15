@@ -54,10 +54,7 @@ class OutputPartWriter:
         self.wav_path, self.mp3_path = compute_part_output_paths(output_root, base_output_dir, part_index, multi_part, self.base_name, group_name, final_stem_override)
 
         if not force and (self.wav_path.exists() or self.mp3_path.exists()):
-            wav_cleared = safe_remove_path(self.wav_path) if self.wav_path.exists() else True
-            mp3_cleared = safe_remove_path(self.mp3_path) if self.mp3_path.exists() else True
-            if (not wav_cleared and self.wav_path.exists()) or (not mp3_cleared and self.mp3_path.exists()):
-                raise FileExistsError(f"Output already exists for {self.wav_path.stem}. Use --force to overwrite.")
+            raise FileExistsError(f"Output already exists for {self.wav_path.stem}. Use --force to overwrite.")
 
         if not self.mp3_only:
             self.wav_path.parent.mkdir(parents=True, exist_ok=True)

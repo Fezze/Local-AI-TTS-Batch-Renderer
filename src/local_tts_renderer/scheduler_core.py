@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from local_tts_renderer.input_parsers import slugify
-from local_tts_renderer.providers import build_worker_provider_list, parse_provider_priority
+from local_tts_renderer.providers import build_worker_provider_list, parse_provider_priority, probe_available_providers
 
 from .scheduler_args import expand_inputs, parse_args
 from .scheduler_jobs import (
@@ -79,12 +79,12 @@ def main() -> int:
     script_path = Path(__file__).resolve().parents[2] / "md_to_audio.py"
     runner_log = (output_dir / slugify(inputs[0].stem) / "runner.jsonl") if len(inputs) == 1 else (output_dir / "runner.jsonl")
     provider_priority = parse_provider_priority(args.providers)
-    available_providers = list(dict.fromkeys([*provider_priority, "CPUExecutionProvider"]))
+    available_providers = probe_available_providers()
     print(
-        f"[batch:providers] available_probe=skipped priority={provider_priority}",
+        f"[batch:providers] available_probe=runtime priority={provider_priority}",
         flush=True,
     )
-    debug_log(args.debug, f"provider_probe_fallback_available={available_providers}")
+    debug_log(args.debug, f"provider_probe_runtime_available={available_providers}")
     worker_providers = build_worker_provider_list(
         available=available_providers,
         gpu_workers=args.gpu_workers,

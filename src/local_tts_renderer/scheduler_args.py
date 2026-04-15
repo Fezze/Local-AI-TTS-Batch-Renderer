@@ -58,7 +58,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-large-chapter-max-chars", type=int, default=DEFAULT_GPU_LARGE_CHAPTER_MAX_CHARS, help="Chunk size used for larger chapters on GPU.")
     parser.add_argument("--gpu-small-chapter-max-chars", type=int, default=DEFAULT_GPU_SMALL_CHAPTER_MAX_CHARS, help="Chunk size used for smaller chapters on GPU.")
     parser.add_argument("--trim-mode", choices=["full", "light", "off"], default=DEFAULT_TRIM_MODE, help="Trimming mode passed to workers.")
-    parser.add_argument("--mp3-only", action="store_true", default=DEFAULT_MP3_ONLY, help="Write only MP3 files from batch workers.")
+    parser.add_argument(
+        "--mp3-only",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_MP3_ONLY,
+        help="Write only MP3 files from batch workers.",
+    )
     parser.add_argument("--heartbeat-seconds", type=float, default=DEFAULT_HEARTBEAT_SECONDS, help="Worker heartbeat interval.")
     parser.add_argument("--worker-silence-timeout-seconds", type=float, default=DEFAULT_WORKER_SILENCE_TIMEOUT_SECONDS, help="Kill and retry a worker process if it produces no output for too long.")
     parser.add_argument(

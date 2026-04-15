@@ -12,11 +12,11 @@ def test_root_entrypoints_delegate(monkeypatch) -> None:
 
 
 def test_chunking_and_render_wrappers_delegate(monkeypatch) -> None:
-    monkeypatch.setattr("local_tts_renderer.cli.build_chunks", lambda *a, **k: ["x"])
-    monkeypatch.setattr("local_tts_renderer.cli.chunk_section", lambda *a, **k: ["y"])
-    monkeypatch.setattr("local_tts_renderer.cli.split_paragraphs", lambda *a, **k: ["p"])
-    monkeypatch.setattr("local_tts_renderer.cli.split_sentences", lambda *a, **k: ["s"])
-    monkeypatch.setattr("local_tts_renderer.cli.split_text_for_retry", lambda *a, **k: ["r"])
+    monkeypatch.setattr(chunking, "build_chunks", lambda *a, **k: ["x"])
+    monkeypatch.setattr(chunking, "chunk_section", lambda *a, **k: ["y"])
+    monkeypatch.setattr(chunking, "split_paragraphs", lambda *a, **k: ["p"])
+    monkeypatch.setattr(chunking, "split_sentences", lambda *a, **k: ["s"])
+    monkeypatch.setattr(chunking, "split_text_for_retry", lambda *a, **k: ["r"])
     monkeypatch.setattr(render, "render_audio", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(render, "write_mp3_from_audio", lambda *a, **k: "mp3a")
     monkeypatch.setattr(render, "write_mp3_from_wav", lambda *a, **k: "mp3w")

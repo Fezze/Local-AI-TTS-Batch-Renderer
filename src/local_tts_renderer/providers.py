@@ -20,6 +20,18 @@ class ProviderResolution:
     requested: list[str]
 
 
+def probe_available_providers() -> list[str]:
+    try:
+        import onnxruntime as ort  # type: ignore
+    except Exception:
+        return ["CPUExecutionProvider"]
+
+    providers = list(ort.get_available_providers())
+    if "CPUExecutionProvider" not in providers:
+        providers.append("CPUExecutionProvider")
+    return providers
+
+
 def parse_provider_priority(raw: str | None, fallback: Iterable[str] | None = None) -> list[str]:
     if raw:
         parsed = [item.strip() for item in raw.split(",") if item.strip()]
