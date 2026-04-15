@@ -12,7 +12,7 @@ import zipfile
 import threading
 from pathlib import Path
 
-from local_tts_renderer import cli_cache, cli_entry, cli_presentation, cli_runtime, cli_parsing, scheduler_jobs, scheduler_process
+from local_tts_renderer import cli_cache, cli_entry, cli_presentation, cli_runtime, input_parsers as cli_parsing, scheduler_jobs, scheduler_process
 from local_tts_renderer.cli_models import AudioMetadata, GROUP_PATH_SEPARATOR
 from local_tts_renderer.input_parsers import Chapter, TocNode, get_group_leaf_title
 from local_tts_renderer.scheduler_types import ChapterJob, WorkerConfig, WorkerStatus

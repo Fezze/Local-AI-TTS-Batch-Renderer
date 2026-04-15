@@ -26,12 +26,12 @@ from .input_parsers import (
     build_chapter_number_map,
     build_group_directory_map,
     build_group_directory_map_from_toc,
+    extract_epub_metadata,
     load_chapters,
     load_epub_toc_from_path,
     sanitize_filename_component,
     slugify,
 )
-from .cli_parsing import extract_epub_metadata
 from .providers import parse_provider_priority
 
 

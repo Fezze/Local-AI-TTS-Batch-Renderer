@@ -28,7 +28,6 @@ from .cli_chunking_utils import (
 )
 from .cli_entry import expand_inputs, main
 from .cli_cache import load_chapters_from_cache
-from .cli_parsing import extract_epub_metadata, strip_front_matter
 from .cli_models import (
     AudioMetadata,
     Chunk,
@@ -71,6 +70,7 @@ from .input_parsers import (
     build_group_directory_map_from_toc,
     clean_markdown,
     clean_plain_text,
+    extract_epub_metadata,
     get_group_leaf_title,
     join_group_path,
     load_chapters,
@@ -79,6 +79,7 @@ from .input_parsers import (
     slugify,
     split_group_path,
     split_markdown_chapters,
+    strip_front_matter,
 )
 from .input_parsers import Chapter, TocNode
 

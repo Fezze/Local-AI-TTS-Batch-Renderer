@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from local_tts_renderer.input_parsers import slugify
+from .input_parsers import slugify
 
 from .scheduler_jobs import (
     build_worker_command,
