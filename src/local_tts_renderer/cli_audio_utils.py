@@ -15,7 +15,7 @@ from mutagen.id3 import ID3, COMM, ID3NoHeaderError, TPUB
 
 from .cli_chunking_utils import split_text_for_retry
 from .cli_models import AudioMetadata
-from .cli_parsing import get_group_leaf_title, sanitize_filename_component
+from .input_parsers import get_group_leaf_title, sanitize_filename_component
 
 
 def light_trim_audio(samples: np.ndarray, sample_rate: int, threshold: float = 0.003, padding_ms: int = 40) -> np.ndarray:
@@ -305,4 +305,3 @@ def build_output_paths(output_root: Path, part_count: int) -> list[tuple[Path, P
         )
         for part_index in range(1, part_count + 1)
     ]
-

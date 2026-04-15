@@ -223,6 +223,12 @@ def split_group_path(group: str | None) -> list[str]:
     return [part.strip() for part in group.split(GROUP_PATH_SEPARATOR) if part.strip()]
 
 
+def get_group_leaf_title(group: str | None) -> str:
+    if not group:
+        return "Chapter"
+    return split_group_path(group)[-1]
+
+
 def build_group_directory_map(chapters: list[Chapter]) -> dict[str, Path]:
     counters_by_parent: dict[str, dict[str, int]] = {}
     mapping: dict[str, Path] = {}
@@ -331,6 +337,7 @@ __all__ = [
     "build_chapter_number_map",
     "build_group_directory_map",
     "build_group_directory_map_from_toc",
+    "get_group_leaf_title",
     "load_chapters",
     "load_epub_toc_from_path",
     "sanitize_filename_component",

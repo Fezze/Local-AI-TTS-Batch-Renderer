@@ -7,9 +7,8 @@ import threading
 import time
 from pathlib import Path
 
-from local_tts_renderer.input_parsers import slugify
-from local_tts_renderer.providers import build_worker_provider_list, parse_provider_priority, probe_available_providers
-
+from .input_parsers import slugify
+from .providers import build_worker_provider_list, parse_provider_priority, probe_available_providers
 from .scheduler_args import expand_inputs, parse_args
 from .scheduler_jobs import (
     build_jobs,
@@ -33,6 +32,26 @@ from .scheduler_process import (
 )
 from .scheduler_runtime import run_worker
 from .scheduler_types import WorkerConfig, WorkerStatus, ChapterJob
+
+
+def _build_worker_configs(worker_providers: list[str]) -> list[WorkerConfig]:
+    workers: list[WorkerConfig] = []
+    gpu_index = 0
+    cpu_index = 0
+    for provider in worker_providers:
+        if provider == "CPUExecutionProvider":
+            cpu_index += 1
+            workers.append(WorkerConfig(name=f"cpu-{cpu_index}", provider=provider))
+        else:
+            gpu_index += 1
+            workers.append(WorkerConfig(name=f"gpu-{gpu_index}", provider=provider))
+    return workers
+
+
+def _log_runtime_context(args, worker_providers: list[str], workers: list[WorkerConfig], runner_log: Path, run_tmp_root: Path) -> None:
+    print(f"[batch:workers] {', '.join(f'{w.name}:{w.provider}' for w in workers)}", flush=True)
+    print(f"[batch:runtime] runner_log={runner_log} tmp_root={run_tmp_root}", flush=True)
+    debug_log(args.debug, f"provider_order_resolved={worker_providers}")
 
 
 def main() -> int:
@@ -91,21 +110,10 @@ def main() -> int:
         cpu_workers=args.cpu_workers,
         provider_priority=provider_priority,
     )
-    workers: list[WorkerConfig] = []
-    gpu_index = 0
-    cpu_index = 0
-    for provider in worker_providers:
-        if provider == "CPUExecutionProvider":
-            cpu_index += 1
-            workers.append(WorkerConfig(name=f"cpu-{cpu_index}", provider=provider))
-        else:
-            gpu_index += 1
-            workers.append(WorkerConfig(name=f"gpu-{gpu_index}", provider=provider))
+    workers = _build_worker_configs(worker_providers)
     run_tmp_root, worker_temp_dirs = prepare_worker_temp_dirs(workers)
-    print(f"[batch:workers] {', '.join(f'{w.name}:{w.provider}' for w in workers)}", flush=True)
-    print(f"[batch:runtime] runner_log={runner_log} tmp_root={run_tmp_root}", flush=True)
     debug_log(args.debug, f"python_exe={python_exe} script_path={script_path}")
-    debug_log(args.debug, f"provider_order_resolved={worker_providers}")
+    _log_runtime_context(args, worker_providers, workers, runner_log, run_tmp_root)
 
     append_runner_log(
         runner_log,

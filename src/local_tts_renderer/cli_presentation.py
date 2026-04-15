@@ -61,3 +61,11 @@ def print_output_structure_preview(source_path: Path, chapters: list[Chapter]) -
                 print(f"{file_indent}{title_slug}")
     else:
         print(f"out/{output_root_name}/")
+
+
+__all__ = [
+    "print_chapter_summary",
+    "print_output_structure_preview",
+    "print_toc_tree",
+    "summarize_chapters",
+]

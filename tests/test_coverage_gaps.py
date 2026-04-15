@@ -12,9 +12,9 @@ import zipfile
 import threading
 from pathlib import Path
 
-from local_tts_renderer import cli_entry, cli_runtime, cli_parsing, scheduler_jobs, scheduler_process
+from local_tts_renderer import cli_cache, cli_entry, cli_presentation, cli_runtime, cli_parsing, scheduler_jobs, scheduler_process
 from local_tts_renderer.cli_models import AudioMetadata, GROUP_PATH_SEPARATOR
-from local_tts_renderer.input_parsers import Chapter, TocNode
+from local_tts_renderer.input_parsers import Chapter, TocNode, get_group_leaf_title
 from local_tts_renderer.scheduler_types import ChapterJob, WorkerConfig, WorkerStatus
 
 
@@ -195,15 +195,15 @@ def test_cli_parsing_helpers_and_preview(monkeypatch) -> None:
 
     payload = _scratch_dir("coverage-cache") / "cache.json"
     payload.write_text(json.dumps([{"title": "A", "text": "hello world", "group": "g"}]), encoding="utf-8")
-    chapters = cli_parsing.load_chapters_from_cache(payload)
+    chapters = cli_cache.load_chapters_from_cache(payload)
     assert chapters[0].title == "A"
-    assert cli_parsing.get_group_leaf_title(None) == "Chapter"
-    assert cli_parsing.get_group_leaf_title(f"one{GROUP_PATH_SEPARATOR}two") == "two"
-    assert cli_parsing.summarize_chapters(chapters)[0]["words"] == 2
+    assert get_group_leaf_title(None) == "Chapter"
+    assert get_group_leaf_title(f"one{GROUP_PATH_SEPARATOR}two") == "two"
+    assert cli_presentation.summarize_chapters(chapters)[0]["words"] == 2
 
     buf = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buf)
-    cli_parsing.print_toc_tree([TocNode(title="Root", href="x", children=[TocNode(title="Child")])])
+    cli_presentation.print_toc_tree([TocNode(title="Root", href="x", children=[TocNode(title="Child")])])
     assert "- Root -> x" in buf.getvalue()
 
 
@@ -224,7 +224,7 @@ def test_cli_parsing_metadata_and_preview(monkeypatch) -> None:
 
     buf = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buf)
-    cli_parsing.print_output_structure_preview(
+    cli_presentation.print_output_structure_preview(
         Path("story.md"),
         [Chapter(title="One", text="x", group=None), Chapter(title="Two", text="y", group="g/a")],
     )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -22,8 +21,10 @@ from .cli_audio_utils import (
 )
 from .cli_chunking_utils import chunk_section
 from .cli_models import AudioMetadata, Chunk, PartialRunComplete, DEFAULT_HEARTBEAT_SECONDS
-from .cli_parsing import Chapter, get_group_leaf_title, sanitize_filename_component, slugify
+from .input_parsers import Chapter, get_group_leaf_title, sanitize_filename_component, slugify
 from .cli_runtime import start_progress_heartbeat
+
+CREATE_AUDIO_WITH_RETRY = create_audio_with_retry
 
 
 class OutputPartWriter:
@@ -149,17 +150,6 @@ class OutputPartWriter:
         return part_payload
 
 
-def _resolve_create_audio_callable():
-    for module_name in ("local_tts_renderer.cli_core", "local_tts_renderer.cli"):
-        module = sys.modules.get(module_name)
-        if module is None:
-            continue
-        candidate = getattr(module, "create_audio_with_retry", None)
-        if callable(candidate):
-            return candidate
-    return create_audio_with_retry
-
-
 def render_chunk_audio(
     kokoro,
     chunk: Chunk,
@@ -183,7 +173,7 @@ def render_chunk_audio(
     total_chunks = progress_state["total_chunks"]
     chunk_started_at = time.time()
 
-    create_audio = _resolve_create_audio_callable()
+    create_audio = CREATE_AUDIO_WITH_RETRY
     audio_parts, current_rate = create_audio(kokoro=kokoro, text=chunk.text, voice=voice, speed=speed, lang=lang, trim_mode=trim_mode)
     audio = np.concatenate(audio_parts)
     if expected_sample_rate is not None and current_rate != expected_sample_rate:

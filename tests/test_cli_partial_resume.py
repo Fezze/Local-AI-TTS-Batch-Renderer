@@ -9,14 +9,14 @@ import numpy as np
 import pytest
 
 from local_tts_renderer import cli
-from local_tts_renderer import cli_core
+from local_tts_renderer import cli_render_flow
 
 
 def test_render_audio_partial_run_writes_resume_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_create_audio_with_retry(**kwargs):  # type: ignore[no-untyped-def]
         return [np.zeros(24000, dtype=np.float32)], 24000
 
-    monkeypatch.setattr(cli_core, "create_audio_with_retry", fake_create_audio_with_retry)
+    monkeypatch.setattr(cli_render_flow, "CREATE_AUDIO_WITH_RETRY", fake_create_audio_with_retry)
 
     chapters = [cli.Chapter(title="Section Alpha", text="Sentence. " * 220, group=None)]
     tmp_path = Path.cwd() / ".test_tmp" / f"tts-cli-partial-{uuid.uuid4().hex}"

@@ -1,6 +1,8 @@
 import sys
 
-from local_tts_renderer.providers import build_worker_provider_list, probe_available_providers, resolve_provider
+import json
+
+from local_tts_renderer.providers import build_worker_provider_list, describe_provider_resolution, probe_available_providers, resolve_provider
 
 
 def test_resolve_provider_prefers_requested_order() -> None:
@@ -31,3 +33,13 @@ def test_build_worker_provider_list_gpu_and_cpu() -> None:
 def test_probe_available_providers_falls_back_to_cpu(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "onnxruntime", None)
     assert probe_available_providers() == ["CPUExecutionProvider"]
+
+
+def test_describe_provider_resolution_serializes_decision() -> None:
+    resolved = resolve_provider(
+        available=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        requested=["DmlExecutionProvider", "CUDAExecutionProvider"],
+    )
+    payload = json.loads(describe_provider_resolution(resolved))
+    assert payload["selected_provider"] == "CUDAExecutionProvider"
+    assert payload["available_providers"] == ["CUDAExecutionProvider", "CPUExecutionProvider"]

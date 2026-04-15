@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Iterable
 
 from .defaults import DEFAULT_PROVIDER_PRIORITY
@@ -82,3 +83,13 @@ def build_worker_provider_list(
         worker_providers.append(resolved.selected)
 
     return worker_providers
+
+
+def describe_provider_resolution(resolution: ProviderResolution) -> str:
+    return json.dumps(
+        {
+            "selected_provider": resolution.selected,
+            "available_providers": resolution.available,
+            "requested_providers": resolution.requested,
+        }
+    )
