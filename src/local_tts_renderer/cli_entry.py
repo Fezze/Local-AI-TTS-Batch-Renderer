@@ -24,8 +24,6 @@ from .cli_runtime import (
 from .input_parsers import (
     Chapter,
     build_chapter_number_map,
-    build_group_directory_map,
-    build_group_directory_map_from_toc,
     extract_epub_metadata,
     load_chapters,
     load_epub_toc_from_path,
@@ -33,6 +31,9 @@ from .input_parsers import (
     slugify,
 )
 from .providers import parse_provider_priority
+from .sources import MarkdownIngestOptions, SourceDocument, SourceLoadOptions, load_source
+from .sources.helpers import build_group_directory_map, build_group_directory_map_from_navigation
+from .sources.model import SourceMetadata
 
 
 def expand_inputs(paths: list[str]) -> list[Path]:
@@ -50,11 +51,47 @@ def expand_inputs(paths: list[str]) -> list[Path]:
     return unique
 
 
-def _load_chapters_for_source(source_path: Path, md_single_chapter: bool, max_chapter_chars: int):
-    try:
-        return load_chapters(source_path, single_chapter=md_single_chapter, max_chapter_chars=max_chapter_chars)
-    except TypeError:
-        return load_chapters(source_path)
+_ORIGINAL_LOAD_CHAPTERS = load_chapters
+
+
+def _load_document_for_source(source_path: Path, md_single_chapter: bool, max_chapter_chars: int) -> SourceDocument:
+    if load_chapters is not _ORIGINAL_LOAD_CHAPTERS:
+        try:
+            chapters = load_chapters(source_path, single_chapter=md_single_chapter, max_chapter_chars=max_chapter_chars)
+        except TypeError:
+            chapters = load_chapters(source_path)
+        return SourceDocument(
+            path=source_path,
+            metadata=SourceMetadata(source_title=source_path.stem),
+            chapters=chapters,
+        )
+    return load_source(
+        source_path,
+        SourceLoadOptions(
+            markdown=MarkdownIngestOptions(
+                single_chapter=md_single_chapter,
+                max_chapter_chars=max_chapter_chars,
+            )
+        ),
+    )
+
+
+def _audio_metadata_from_source(document: SourceDocument) -> AudioMetadata:
+    metadata = document.metadata
+    return AudioMetadata(
+        source_title=metadata.source_title,
+        author=metadata.author,
+        publisher=metadata.publisher,
+        published_date=metadata.published_date,
+        language=metadata.language,
+    )
+
+
+def _group_directory_map_for_source(document: SourceDocument) -> dict[str, Path]:
+    selected_groups = {chapter.group for chapter in document.chapters if chapter.group}
+    if document.navigation:
+        return build_group_directory_map_from_navigation(document.navigation, selected_groups)
+    return build_group_directory_map(document.chapters)
 
 
 def main() -> int:
@@ -94,13 +131,12 @@ def main() -> int:
 
     if args.list_chapters:
         for source_path in inputs:
-            if source_path.suffix.lower() == ".epub":
+            document = _load_document_for_source(source_path, md_single_chapter, max_chapter_chars)
+            chapters = [chapter for chapter in document.chapters if chapter.text and chapter.text.strip()]
+            if document.navigation:
                 print(f"Source: {source_path}")
-                toc = load_epub_toc_from_path(source_path)
-                print_toc_tree(toc)
-                chapters = [chapter for chapter in _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars) if chapter.text and chapter.text.strip()]
+                print_toc_tree(document.navigation)
             else:
-                chapters = [chapter for chapter in _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars) if chapter.text and chapter.text.strip()]
                 print_chapter_summary(source_path, chapters)
             print_output_structure_preview(source_path, chapters)
         return 0
@@ -143,30 +179,25 @@ def main() -> int:
             print(f"[run:warmup] failed error={exc}", flush=True)
 
     for source_path in inputs:
+        document = _load_document_for_source(source_path, md_single_chapter, max_chapter_chars)
         if args.chapter_cache and args.chapter_index is not None:
             cache_path = Path(args.chapter_cache).resolve()
             if cache_path.exists():
                 chapters = load_chapters_from_cache(cache_path)
                 debug_trace(f"load_chapters:cache_done path={cache_path} chapters={len(chapters)}")
             else:
-                chapters = _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars)
+                chapters = document.chapters
         else:
-            chapters = _load_chapters_for_source(source_path, md_single_chapter, max_chapter_chars)
+            chapters = document.chapters
         chapters = [chapter for chapter in chapters if chapter.text and chapter.text.strip()]
         if not chapters:
             print(f"Skipped {source_path}: no readable chapters after cleaning.", file=sys.stderr)
             continue
 
-        audio_metadata = AudioMetadata(source_title=source_path.stem)
-        if source_path.suffix.lower() == ".epub":
-            audio_metadata = extract_epub_metadata(source_path)
-        if source_path.suffix.lower() == ".epub":
-            group_dir_map = build_group_directory_map_from_toc(
-                load_epub_toc_from_path(source_path),
-                {chapter.group for chapter in chapters if chapter.group},
-            )
-        else:
-            group_dir_map = build_group_directory_map(chapters)
+        if chapters is not document.chapters:
+            document = SourceDocument(path=document.path, metadata=document.metadata, chapters=chapters, navigation=document.navigation)
+        audio_metadata = _audio_metadata_from_source(document)
+        group_dir_map = _group_directory_map_for_source(document)
 
         output_root_base = output_dir / slugify(source_path.stem)
         if args.chapter_index is not None:
@@ -175,7 +206,7 @@ def main() -> int:
                 return 2
             original_chapter = chapters[args.chapter_index - 1]
             chapter_group = original_chapter.group
-            chapter_position = args.chapter_index if source_path.suffix.lower() == ".epub" else build_chapter_number_map(chapters)[args.chapter_index]
+            chapter_position = args.chapter_index if document.navigation else build_chapter_number_map(chapters)[args.chapter_index]
             chapter_title = original_chapter.title
             output_name = args.output_name or f"{chapter_position:02d}-{sanitize_filename_component(chapter_title)}"
             chapter_subdir = Path(args.output_subdir) if args.output_subdir else Path()

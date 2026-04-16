@@ -11,6 +11,7 @@ from .defaults import (
     DEFAULT_CPU_WORKER_MAX_CHARS,
     DEFAULT_CPU_WORKERS,
     DEFAULT_DEBUG,
+    DEFAULT_FRESH,
     DEFAULT_TRIM_MODE,
     DEFAULT_FORCE,
     DEFAULT_GPU_LARGE_CHAPTER_MAX_CHARS,
@@ -50,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--silence-ms", type=int, default=DEFAULT_SILENCE_MS)
     parser.add_argument("--force", action="store_true", default=DEFAULT_FORCE)
     parser.add_argument("--keep-chunks", action="store_true", default=DEFAULT_KEEP_CHUNKS)
-    parser.add_argument("--fresh", action="store_true", default=DEFAULT_FORCE, help="Delete existing resume checkpoint for each input before starting.")
+    parser.add_argument("--fresh", action="store_true", default=DEFAULT_FRESH, help="Delete existing resume checkpoint for each input before starting.")
     parser.add_argument("--md-single-chapter", action="store_true", default=DEFAULT_MD_SINGLE_CHAPTER, help="Treat Markdown input as one chapter instead of splitting on headings.")
     parser.add_argument("--max-chapter-chars", type=int, default=DEFAULT_MAX_CHAPTER_CHARS, help="Maximum character count per Markdown chapter. 0 disables extra splitting.")
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="Retry failed chapter jobs this many times.")

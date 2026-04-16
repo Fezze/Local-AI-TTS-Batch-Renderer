@@ -16,6 +16,8 @@ from .input_parsers import (
     sanitize_filename_component,
     slugify,
 )
+from .sources import MarkdownIngestOptions, SourceDocument, SourceLoadOptions, load_source
+from .sources.helpers import build_group_directory_map, build_group_directory_map_from_navigation
 
 from .defaults import (
     DEFAULT_CPU_MAX_CHARS,
@@ -31,6 +33,39 @@ from .scheduler_types import (
     WorkerConfig,
     WorkerStatus,
 )
+
+
+_ORIGINAL_LOAD_CHAPTERS = load_chapters
+
+
+def _load_document_for_jobs(source_path: Path, md_single_chapter: bool, max_chapter_chars: int) -> SourceDocument:
+    if load_chapters is not _ORIGINAL_LOAD_CHAPTERS:
+        chapters = load_chapters(source_path)
+        navigation = []
+        if load_epub_toc_from_path is not None:
+            try:
+                from .sources.epub import _navigation_from_toc
+
+                navigation = _navigation_from_toc(load_epub_toc_from_path(source_path))
+            except Exception:
+                navigation = []
+        from .sources.model import SourceMetadata
+
+        return SourceDocument(
+            path=source_path,
+            metadata=SourceMetadata(source_title=source_path.stem),
+            chapters=chapters,
+            navigation=navigation,
+        )
+    return load_source(
+        source_path,
+        SourceLoadOptions(
+            markdown=MarkdownIngestOptions(
+                single_chapter=md_single_chapter,
+                max_chapter_chars=max_chapter_chars,
+            )
+        ),
+    )
 
 
 def cpu_allowed_chunk_budget(statuses: dict[str, WorkerStatus], worker_name: str) -> int:
@@ -101,11 +136,11 @@ def build_jobs(
         source_started = time.time()
         print(f"[batch:scan] source_start path={source_path}", flush=True)
         chapters_load_started = time.time()
-        try:
-            source_chapters = load_chapters(source_path, single_chapter=md_single_chapter, max_chapter_chars=max_chapter_chars)
-        except TypeError:
-            source_chapters = load_chapters(source_path)
+        document = _load_document_for_jobs(source_path, md_single_chapter, max_chapter_chars)
+        source_chapters = document.chapters
         chapters = [chapter for chapter in source_chapters if chapter.text and chapter.text.strip()]
+        if chapters is not document.chapters:
+            document = SourceDocument(path=document.path, metadata=document.metadata, chapters=chapters, navigation=document.navigation)
         cache_key = re_slug(str(source_path))
         cache_path = cache_root / f"{cache_key}.json"
         cache_payload = [
@@ -119,22 +154,21 @@ def build_jobs(
             f"elapsed={time.time() - chapters_load_started:.1f}s",
             flush=True,
         )
-        group_dir_map = {}
+        group_dir_map = build_group_directory_map(document.chapters)
         root_title_index_map: dict[str, int] = {}
         used_output_names: dict[str, set[str]] = {}
-        if source_path.suffix.lower() == ".epub":
+        if document.navigation:
             toc_started = time.time()
-            toc_nodes = load_epub_toc_from_path(source_path)
             print(
-                f"[batch:scan] toc_loaded path={source_path} nodes={len(toc_nodes)} "
+                f"[batch:scan] navigation_loaded path={source_path} nodes={len(document.navigation)} "
                 f"elapsed={time.time() - toc_started:.1f}s",
                 flush=True,
             )
-            group_dir_map = build_group_directory_map_from_toc(
-                toc_nodes,
+            group_dir_map = build_group_directory_map_from_navigation(
+                document.navigation,
                 {chapter.group for chapter in chapters if chapter.group},
             )
-            for index, node in enumerate(toc_nodes, start=1):
+            for index, node in enumerate(document.navigation, start=1):
                 root_title_index_map.setdefault(sanitize_filename_component(node.title), index)
         source_slug = slugify(source_path.stem)
         local_counters: dict[str, int] = {}

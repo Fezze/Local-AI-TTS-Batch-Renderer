@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from .model import SourceChapter, SourceDocument, SourceMetadata, SourceNavigationNode
-from .registry import SourceLoadOptions, load_source, supported_suffixes
+from .registry import MarkdownIngestOptions, SourceLoadOptions, load_source, supported_suffixes
 
 __all__ = [
+    "MarkdownIngestOptions",
     "SourceChapter",
     "SourceDocument",
     "SourceLoadOptions",

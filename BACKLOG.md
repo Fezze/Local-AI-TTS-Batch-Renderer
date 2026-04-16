@@ -1,13 +1,10 @@
 # BACKLOG
 
-Szczegoly i pelny kontekst dla ponizszych pozycji sa w [local_tts_renderer_review_and_refactor_guidance.md](local_tts_renderer_review_and_refactor_guidance.md).
-
 ## P0
 
 - [ ] Zbudowac realna warstwe source ingestion i wspolny model posredni. Pierwszy krok jest zaczety w `src/local_tts_renderer/sources`: model, registry oraz ingester Markdown/EPUB.
 - [ ] Rozbic `input_parsers.py`: przeniesc Markdown i EPUB do `sources/markdown.py` oraz `sources/epub.py`, zostawiajac tylko neutralne shared utilities.
 - [ ] Usunac format-specific branching z CLI i batch orchestration (`.epub`, `.md`) przez uzycie `SourceDocument`.
-- [x] Zastapic hardcoded directory scan `.md`/`.epub` rejestrem wspieranych suffixow z `sources`.
 - [ ] Odseparowac Markdown-specific opcje (`md_single_chapter`, `max_chapter_chars`) od generic loading API.
 - [ ] Zweryfikowac i odchudzic `cli_core.py`; `__all__` nie moze reklamowac nazw, ktore nie sa jawnie importowane i wspierane.
 - [ ] Uporzadkowac `scheduler_core.py` tak, zeby byl composition root, a nie logic owner.

@@ -64,6 +64,13 @@ from .cli_runtime import (
     parse_args,
     start_progress_heartbeat,
 )
+from .scheduler_logging import (
+    append_runner_log,
+    debug_log,
+    print_batch_summary,
+    resolve_worker_silence_timeout,
+    update_worker_phase,
+)
 from .input_parsers import (
     build_chapter_number_map,
     build_group_directory_map,

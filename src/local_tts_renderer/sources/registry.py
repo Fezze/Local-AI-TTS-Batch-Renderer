@@ -5,7 +5,7 @@ from types import ModuleType
 
 from . import epub, markdown
 from .model import SourceDocument
-from .registry_types import SourceLoadOptions
+from .registry_types import MarkdownIngestOptions, SourceLoadOptions
 
 INGESTERS: tuple[ModuleType, ...] = (markdown, epub)
 
@@ -28,4 +28,4 @@ def load_source(path: Path, options: SourceLoadOptions | None = None) -> SourceD
     raise ValueError(f"Unsupported source format: {path}")
 
 
-__all__ = ["SourceLoadOptions", "can_load", "load_source", "supported_suffixes"]
+__all__ = ["MarkdownIngestOptions", "SourceLoadOptions", "can_load", "load_source", "supported_suffixes"]
