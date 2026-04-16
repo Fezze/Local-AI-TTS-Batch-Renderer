@@ -76,13 +76,24 @@ python run_tts_batch.py --input "books" --gpu-workers 2 --cpu-workers 1 --provid
 
 ## Project Structure
 
-- `src/local_tts_renderer/cli.py` - TTS CLI/render flow
+- `src/local_tts_renderer/cli.py` - thin CLI entrypoint
+- `src/local_tts_renderer/cli_entry.py` - single-run orchestration
+- `src/local_tts_renderer/cli_render_flow.py` - TTS render flow
 - `src/local_tts_renderer/scheduler.py` - batch scheduler
+- `src/local_tts_renderer/sources/` - source ingesters, source registry, and normalized document model
+- `src/local_tts_renderer/document_helpers.py` - source-agnostic naming and grouping helpers
 - `src/local_tts_renderer/providers.py` - provider resolution and worker allocation
 - `src/local_tts_renderer/chunking.py` - chunking interface
-- `src/local_tts_renderer/input_parsers.py` - parser interface
+- `src/local_tts_renderer/input_parsers.py` - legacy compatibility facade; new internal code should use `sources/`
 - `scripts/` - setup/start scripts
 - `tests/` - regression and unit tests
+
+## Source Ingestion
+
+Source format support is registry-driven. Each ingester normalizes input into `SourceDocument`,
+`SourceMetadata`, `SourceChapter`, and optional `SourceNavigationNode` objects before rendering
+or batch planning. Adding a future format should mostly mean adding one ingester module,
+registering it, and testing its normalized document output.
 
 ## Troubleshooting
 

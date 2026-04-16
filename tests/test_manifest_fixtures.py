@@ -8,8 +8,10 @@ from pathlib import Path
 
 import numpy as np
 
-from local_tts_renderer import cli_core, cli_render_flow, input_parsers as ip
+from local_tts_renderer import cli_render_flow
 from local_tts_renderer.cli_models import AudioMetadata
+from local_tts_renderer.document_helpers import build_group_directory_map_from_navigation
+from local_tts_renderer.sources import load_source
 
 
 def _mk_tmp_dir() -> Path:
@@ -63,10 +65,11 @@ def test_render_audio_manifest_order_from_markdown(monkeypatch) -> None:
     try:
         md_path = tmp / "book.md"
         md_path.write_text("# One\nA\n\n# Two\nB\n\n# Three\nC", encoding="utf-8")
-        chapters = ip.load_chapters(md_path)
+        document = load_source(md_path)
+        chapters = document.chapters
 
         output_root = tmp / "out"
-        manifest = cli_core.render_audio(
+        manifest = cli_render_flow.render_audio(
             kokoro=object(),
             chapters=chapters,
             base_output_dir=tmp,
@@ -139,14 +142,15 @@ def test_render_audio_manifest_order_from_epub(monkeypatch) -> None:
                 """<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Two</h1><p>B</p></body></html>""",
             )
 
-        chapters = ip.load_chapters(epub_path)
+        document = load_source(epub_path)
+        chapters = document.chapters
         output_root = tmp / "out"
-        manifest = cli_core.render_audio(
+        manifest = cli_render_flow.render_audio(
             kokoro=object(),
             chapters=chapters,
             base_output_dir=tmp,
             output_root=output_root,
-            group_dir_map=ip.build_group_directory_map_from_toc(ip.load_epub_toc_from_path(epub_path), {chapter.group for chapter in chapters if chapter.group}),
+            group_dir_map=build_group_directory_map_from_navigation(document.navigation, {chapter.group for chapter in chapters if chapter.group}),
             voice="voice_a",
             lang="en-us",
             trim_mode="off",

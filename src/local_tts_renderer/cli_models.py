@@ -15,7 +15,8 @@ from .defaults import (
     MODEL_URL,
     VOICES_URL,
 )
-from .input_parsers import Chapter, TocNode
+from .sources.model import SourceChapter as Chapter
+from .sources.model import SourceNavigationNode as TocNode
 
 
 class PartialRunComplete(Exception):

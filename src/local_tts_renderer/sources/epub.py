@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from pathlib import PurePosixPath
 
+from ..document_helpers import clean_plain_text, join_group_path
 from .model import SourceChapter, SourceDocument, SourceMetadata, SourceNavigationNode
 from .registry_types import SourceLoadOptions
-from .helpers import clean_plain_text, join_group_path
 
 
 SUPPORTED_SUFFIXES = frozenset({".epub"})

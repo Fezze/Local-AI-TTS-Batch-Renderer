@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .input_parsers import Chapter, TocNode, sanitize_filename_component, slugify, split_group_path
+from .document_helpers import sanitize_filename_component, slugify, split_group_path
+from .sources.model import SourceChapter, SourceNavigationNode
+
+Chapter = SourceChapter
+TocNode = SourceNavigationNode
 
 
 def summarize_chapters(chapters: list[Chapter]) -> list[dict]:

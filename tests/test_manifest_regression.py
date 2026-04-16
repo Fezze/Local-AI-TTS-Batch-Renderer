@@ -7,9 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
-from local_tts_renderer import cli_core, cli_render_flow
+from local_tts_renderer import cli_render_flow
 from local_tts_renderer.cli_models import AudioMetadata
-from local_tts_renderer.input_parsers import Chapter
+from local_tts_renderer.sources.model import SourceChapter as Chapter
 
 
 def _mk_tmp_dir() -> Path:
@@ -31,7 +31,7 @@ def test_render_audio_manifest_preserves_chunk_order(monkeypatch) -> None:
     tmp_path = _mk_tmp_dir()
     try:
         output_root = tmp_path / "doc"
-        manifest = cli_core.render_audio(
+        manifest = cli_render_flow.render_audio(
             kokoro=object(),
             chapters=chapters,
             base_output_dir=tmp_path,

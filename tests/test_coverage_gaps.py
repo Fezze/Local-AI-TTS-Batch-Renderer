@@ -16,6 +16,7 @@ from local_tts_renderer import cli_cache, cli_entry, cli_presentation, cli_runti
 from local_tts_renderer.cli_models import AudioMetadata, GROUP_PATH_SEPARATOR
 from local_tts_renderer.input_parsers import Chapter, TocNode, get_group_leaf_title
 from local_tts_renderer.scheduler_types import ChapterJob, WorkerConfig, WorkerStatus
+from local_tts_renderer.sources.model import SourceDocument, SourceMetadata
 
 
 def _scratch_dir(name: str) -> Path:
@@ -133,10 +134,14 @@ def test_cli_entry_md_flags(monkeypatch) -> None:
         warmup_text="",
         max_parts_per_run=0,
     ))
-    monkeypatch.setattr(cli_entry, "load_chapters", lambda path, **kwargs: seen.append([Chapter(title="Whole", text="x", group=None)]) or seen[-1])
+    def fake_load_source(path, options=None):  # type: ignore[no-untyped-def]
+        chapters = [Chapter(title="Whole", text="x", group=None)]
+        seen.append(chapters)
+        return SourceDocument(path=path, metadata=SourceMetadata(source_title="s"), chapters=chapters)
+
+    monkeypatch.setattr(cli_entry, "load_source", fake_load_source)
     monkeypatch.setattr(cli_entry, "build_group_directory_map", lambda chapters: {})
     monkeypatch.setattr(cli_entry, "render_audio", lambda **kwargs: {"parts": [], "chunk_count": 1, "voice": "v"})
-    monkeypatch.setattr(cli_entry, "extract_epub_metadata", lambda path: AudioMetadata(source_title="s"))
     assert cli_entry.main() == 0
     assert seen
 
@@ -173,11 +178,18 @@ def test_cli_entry_list_and_partial_branches(monkeypatch) -> None:
         max_parts_per_run=0,
     )
     monkeypatch.setattr(cli_entry, "parse_args", lambda: argparse.Namespace(**common))
-    monkeypatch.setattr(cli_entry, "load_chapters", lambda path: [Chapter(title="T", text="alpha", group=None)])
+    monkeypatch.setattr(
+        cli_entry,
+        "load_source",
+        lambda path, options=None: SourceDocument(
+            path=path,
+            metadata=SourceMetadata(source_title="s"),
+            chapters=[Chapter(title="T", text="alpha", group=None)],
+        ),
+    )
     monkeypatch.setattr(cli_entry, "print_chapter_summary", lambda *a, **k: None)
     monkeypatch.setattr(cli_entry, "print_output_structure_preview", lambda *a, **k: None)
     monkeypatch.setattr(cli_entry, "print_toc_tree", lambda *a, **k: None)
-    monkeypatch.setattr(cli_entry, "load_epub_toc_from_path", lambda path: [])
     assert cli_entry.main() == 0
 
     common["list_chapters"] = False
@@ -185,7 +197,6 @@ def test_cli_entry_list_and_partial_branches(monkeypatch) -> None:
     common["output_dir"] = str(_scratch_dir("entry-out2"))
     monkeypatch.setattr(cli_entry, "parse_args", lambda: argparse.Namespace(**common))
     monkeypatch.setattr(cli_entry, "build_group_directory_map", lambda chapters: {})
-    monkeypatch.setattr(cli_entry, "extract_epub_metadata", lambda path: AudioMetadata(source_title="s"))
     monkeypatch.setattr(cli_entry, "render_audio", lambda **kwargs: (_ for _ in ()).throw(cli_entry.PartialRunComplete()))
     assert cli_entry.main() == 75
 

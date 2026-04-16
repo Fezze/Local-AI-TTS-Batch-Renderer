@@ -4,7 +4,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .input_parsers import slugify
+from .document_helpers import slugify
 from .providers import build_worker_provider_list, parse_provider_priority, probe_available_providers
 from .scheduler_jobs import prepare_worker_temp_dirs
 from .scheduler_logging import debug_log

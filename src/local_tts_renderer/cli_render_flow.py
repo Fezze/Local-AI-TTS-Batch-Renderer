@@ -21,8 +21,9 @@ from .cli_audio_utils import (
 )
 from .cli_chunking_utils import chunk_section
 from .cli_models import AudioMetadata, Chunk, PartialRunComplete, DEFAULT_HEARTBEAT_SECONDS
-from .input_parsers import Chapter, get_group_leaf_title, sanitize_filename_component, slugify
+from .document_helpers import get_group_leaf_title, sanitize_filename_component, slugify
 from .cli_runtime import start_progress_heartbeat
+from .sources.model import SourceChapter as Chapter
 
 CREATE_AUDIO_WITH_RETRY = create_audio_with_retry
 

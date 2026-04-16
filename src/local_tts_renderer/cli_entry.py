@@ -21,19 +21,16 @@ from .cli_runtime import (
     get_onnxruntime,
     parse_args,
 )
-from .input_parsers import (
-    Chapter,
+from .document_helpers import (
     build_chapter_number_map,
-    extract_epub_metadata,
-    load_chapters,
-    load_epub_toc_from_path,
+    build_group_directory_map,
+    build_group_directory_map_from_navigation,
     sanitize_filename_component,
     slugify,
 )
 from .providers import parse_provider_priority
 from .sources import MarkdownIngestOptions, SourceDocument, SourceLoadOptions, load_source
-from .sources.helpers import build_group_directory_map, build_group_directory_map_from_navigation
-from .sources.model import SourceMetadata
+from .sources.model import SourceChapter
 
 
 def expand_inputs(paths: list[str]) -> list[Path]:
@@ -51,20 +48,7 @@ def expand_inputs(paths: list[str]) -> list[Path]:
     return unique
 
 
-_ORIGINAL_LOAD_CHAPTERS = load_chapters
-
-
 def _load_document_for_source(source_path: Path, md_single_chapter: bool, max_chapter_chars: int) -> SourceDocument:
-    if load_chapters is not _ORIGINAL_LOAD_CHAPTERS:
-        try:
-            chapters = load_chapters(source_path, single_chapter=md_single_chapter, max_chapter_chars=max_chapter_chars)
-        except TypeError:
-            chapters = load_chapters(source_path)
-        return SourceDocument(
-            path=source_path,
-            metadata=SourceMetadata(source_title=source_path.stem),
-            chapters=chapters,
-        )
     return load_source(
         source_path,
         SourceLoadOptions(
@@ -216,7 +200,7 @@ def main() -> int:
                 chapter_subdir = Path(slugify(source_path.stem))
 
             chapter_output_root = output_dir / chapter_subdir
-            chapter_for_render = Chapter(title=chapter_title, text=original_chapter.text, group=None)
+            chapter_for_render = SourceChapter(title=chapter_title, text=original_chapter.text, group=None)
             try:
                 manifest = render_audio(
                     kokoro=kokoro,

@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .sources import SourceLoadOptions, load_source
-from .sources.epub import TocNode, build_toc_lookup, extract_epub_chapters_dynamic, load_epub_toc_from_path
-from .sources.epub import extract_epub_metadata as _extract_source_epub_metadata
-from .sources.helpers import (
+from .document_helpers import (
     build_chapter_number_map,
     build_group_directory_map,
     clean_plain_text,
@@ -15,13 +12,16 @@ from .sources.helpers import (
     slugify,
     split_group_path,
 )
+from .sources import SourceLoadOptions, load_source
+from .sources.epub import TocNode, build_toc_lookup, extract_epub_chapters_dynamic, load_epub_toc_from_path
+from .sources.epub import extract_epub_metadata as _extract_source_epub_metadata
 from .sources.markdown import clean_markdown, split_markdown_chapters, strip_front_matter
 from .sources.model import SourceChapter as Chapter
 
 
 def build_group_directory_map_from_toc(nodes: list[TocNode], selected_groups: set[str]) -> dict[str, Path]:
+    from .document_helpers import build_group_directory_map_from_navigation
     from .sources.epub import _navigation_from_toc
-    from .sources.helpers import build_group_directory_map_from_navigation
 
     return build_group_directory_map_from_navigation(_navigation_from_toc(nodes), selected_groups)
 

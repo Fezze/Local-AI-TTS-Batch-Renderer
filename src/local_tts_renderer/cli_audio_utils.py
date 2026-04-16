@@ -15,7 +15,7 @@ from mutagen.id3 import ID3, COMM, ID3NoHeaderError, TPUB
 
 from .cli_chunking_utils import split_text_for_retry
 from .cli_models import AudioMetadata
-from .input_parsers import get_group_leaf_title, sanitize_filename_component
+from .document_helpers import get_group_leaf_title, sanitize_filename_component
 
 
 def light_trim_audio(samples: np.ndarray, sample_rate: int, threshold: float = 0.003, padding_ms: int = 40) -> np.ndarray:

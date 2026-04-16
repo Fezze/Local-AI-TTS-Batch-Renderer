@@ -9,15 +9,13 @@ import tempfile
 import time
 from pathlib import Path
 
-from .input_parsers import (
-    build_group_directory_map_from_toc,
-    load_chapters,
-    load_epub_toc_from_path,
+from .document_helpers import (
+    build_group_directory_map,
+    build_group_directory_map_from_navigation,
     sanitize_filename_component,
     slugify,
 )
 from .sources import MarkdownIngestOptions, SourceDocument, SourceLoadOptions, load_source
-from .sources.helpers import build_group_directory_map, build_group_directory_map_from_navigation
 
 from .defaults import (
     DEFAULT_CPU_MAX_CHARS,
@@ -35,28 +33,7 @@ from .scheduler_types import (
 )
 
 
-_ORIGINAL_LOAD_CHAPTERS = load_chapters
-
-
 def _load_document_for_jobs(source_path: Path, md_single_chapter: bool, max_chapter_chars: int) -> SourceDocument:
-    if load_chapters is not _ORIGINAL_LOAD_CHAPTERS:
-        chapters = load_chapters(source_path)
-        navigation = []
-        if load_epub_toc_from_path is not None:
-            try:
-                from .sources.epub import _navigation_from_toc
-
-                navigation = _navigation_from_toc(load_epub_toc_from_path(source_path))
-            except Exception:
-                navigation = []
-        from .sources.model import SourceMetadata
-
-        return SourceDocument(
-            path=source_path,
-            metadata=SourceMetadata(source_title=source_path.stem),
-            chapters=chapters,
-            navigation=navigation,
-        )
     return load_source(
         source_path,
         SourceLoadOptions(

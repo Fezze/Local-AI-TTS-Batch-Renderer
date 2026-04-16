@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .input_parsers import Chapter
+from .sources.model import SourceChapter as Chapter
 
 
 def load_chapters_from_cache(cache_path: Path) -> list[Chapter]:

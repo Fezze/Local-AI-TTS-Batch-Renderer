@@ -2,12 +2,38 @@ from __future__ import annotations
 
 import io
 import shutil
+import types
 import uuid
 from pathlib import Path
 
 import numpy as np
 
-from local_tts_renderer import cli_core as cli
+from local_tts_renderer import cli_audio_utils, cli_chunking_utils, cli_render_flow, cli_runtime, document_helpers
+from local_tts_renderer.cli_models import AudioMetadata
+from local_tts_renderer.sources import markdown
+
+cli = types.SimpleNamespace(
+    AudioMetadata=AudioMetadata,
+    OutputPartWriter=cli_render_flow.OutputPartWriter,
+    build_chunks=cli_chunking_utils.build_chunks,
+    build_output_paths=cli_audio_utils.build_output_paths,
+    clean_markdown=markdown.clean_markdown,
+    clean_plain_text=document_helpers.clean_plain_text,
+    compute_part_output_paths=cli_audio_utils.compute_part_output_paths,
+    configure_runtime_temp_dir=cli_runtime.configure_runtime_temp_dir,
+    create_audio_with_retry=cli_audio_utils.create_audio_with_retry,
+    cross_process_io_gate=cli_audio_utils.cross_process_io_gate,
+    extract_track_number=cli_audio_utils.extract_track_number,
+    iter_sections=cli_chunking_utils.iter_sections,
+    light_trim_audio=cli_audio_utils.light_trim_audio,
+    parse_args=cli_runtime.parse_args,
+    safe_remove_path=cli_audio_utils.safe_remove_path,
+    split_markdown_chapters=markdown.split_markdown_chapters,
+    split_sentences=cli_chunking_utils.split_sentences,
+    split_text_for_retry=cli_chunking_utils.split_text_for_retry,
+    write_mp3_from_audio=cli_audio_utils.write_mp3_from_audio,
+    write_mp3_from_wav=cli_audio_utils.write_mp3_from_wav,
+)
 
 
 def _mk_tmp_dir() -> Path:
@@ -135,7 +161,7 @@ def test_mp3_write_from_audio_and_wav() -> None:
 def test_output_part_writer_close(monkeypatch) -> None:
     tmp = _mk_tmp_dir()
     try:
-        monkeypatch.setattr(cli, "write_mp3_tags", lambda *a, **k: None)
+        monkeypatch.setattr(cli_render_flow, "write_mp3_tags", lambda *a, **k: None)
         writer = cli.OutputPartWriter(
             output_root=tmp / "book" / "04-Neutral Chapter",
             base_output_dir=tmp,
@@ -162,7 +188,7 @@ def test_output_part_writer_close(monkeypatch) -> None:
 def test_output_part_writer_fails_fast_when_output_exists(monkeypatch) -> None:
     tmp = _mk_tmp_dir()
     try:
-        monkeypatch.setattr(cli, "write_mp3_tags", lambda *a, **k: None)
+        monkeypatch.setattr(cli_render_flow, "write_mp3_tags", lambda *a, **k: None)
         out_root = tmp / "book" / "04-Neutral Chapter"
         _, mp3_path = cli.compute_part_output_paths(
             output_root=out_root,
@@ -176,7 +202,7 @@ def test_output_part_writer_fails_fast_when_output_exists(monkeypatch) -> None:
         mp3_path.parent.mkdir(parents=True, exist_ok=True)
         mp3_path.write_bytes(b"existing")
         calls: list[Path] = []
-        monkeypatch.setattr(cli, "safe_remove_path", lambda path: calls.append(path) or True)
+        monkeypatch.setattr(cli_render_flow, "safe_remove_path", lambda path: calls.append(path) or True)
         try:
             cli.OutputPartWriter(
                 output_root=out_root,

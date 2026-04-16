@@ -5,8 +5,9 @@ import uuid
 from pathlib import Path
 
 from local_tts_renderer import scheduler_jobs as sj
-from local_tts_renderer.input_parsers import Chapter, TocNode
 from local_tts_renderer.scheduler_types import ChapterJob, WorkerStatus
+from local_tts_renderer.sources.model import SourceChapter as Chapter
+from local_tts_renderer.sources.model import SourceDocument, SourceMetadata, SourceNavigationNode
 
 
 def _mk_tmp_dir() -> Path:
@@ -84,12 +85,23 @@ def test_build_jobs_md_and_epub_paths(monkeypatch) -> None:
             Chapter(title="Chapter 2", text="text", group="Book / Part A"),
         ]
 
-        def fake_load(path: Path):
-            return chapters_epub if path.suffix == ".epub" else chapters_md
+        def fake_load_source(path: Path, options=None):  # type: ignore[no-untyped-def]
+            if path.suffix == ".epub":
+                return SourceDocument(
+                    path=path,
+                    metadata=SourceMetadata(source_title="neutral"),
+                    chapters=chapters_epub,
+                    navigation=[
+                        SourceNavigationNode(
+                            title="Book",
+                            href="x",
+                            children=[SourceNavigationNode(title="Part A", href="y")],
+                        )
+                    ],
+                )
+            return SourceDocument(path=path, metadata=SourceMetadata(source_title="neutral"), chapters=chapters_md)
 
-        monkeypatch.setattr(sj, "load_chapters", fake_load)
-        monkeypatch.setattr(sj, "load_epub_toc_from_path", lambda _p: [TocNode(title="Book", href="x", children=[TocNode(title="Part A", href="y", children=None)])])
-        monkeypatch.setattr(sj, "build_group_directory_map_from_toc", lambda _nodes, _groups: {"Book / Part A": Path("01-Book")})
+        monkeypatch.setattr(sj, "load_source", fake_load_source)
         monkeypatch.setattr(sj, "is_job_complete", lambda *_a, **_k: False)
 
         jobs, skipped, cache_map = sj.build_jobs([src_md, src_epub], out, fresh=False, debug=False)
@@ -98,4 +110,3 @@ def test_build_jobs_md_and_epub_paths(monkeypatch) -> None:
         assert src_md in cache_map and src_epub in cache_map
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
