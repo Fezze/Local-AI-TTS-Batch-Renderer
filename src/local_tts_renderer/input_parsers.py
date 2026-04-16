@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Backward-compatible parser facade.
+
+Internal code should use `local_tts_renderer.sources`, `sources.model`, and
+`document_helpers` directly. Keep this module thin; do not add new ingestion
+logic here.
+"""
+
 from pathlib import Path
 
 from .document_helpers import (

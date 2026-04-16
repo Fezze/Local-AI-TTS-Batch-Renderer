@@ -77,6 +77,7 @@ python run_tts_batch.py --input "books" --gpu-workers 2 --cpu-workers 1 --provid
 ## Project Structure
 
 - `src/local_tts_renderer/cli.py` - thin CLI entrypoint
+- `src/local_tts_renderer/cli_core.py` - minimal compatibility shim for `main` and `parse_args`
 - `src/local_tts_renderer/cli_entry.py` - single-run orchestration
 - `src/local_tts_renderer/cli_render_flow.py` - TTS render flow
 - `src/local_tts_renderer/scheduler.py` - batch scheduler
@@ -94,6 +95,15 @@ Source format support is registry-driven. Each ingester normalizes input into `S
 `SourceMetadata`, `SourceChapter`, and optional `SourceNavigationNode` objects before rendering
 or batch planning. Adding a future format should mostly mean adding one ingester module,
 registering it, and testing its normalized document output.
+
+`input_parsers.py` is kept only as a backward-compatible facade for old callers. New internal
+code should not import from it or add parsing logic there. Compatibility shims such as
+`cli_core.py`, `render.py`, and `chunking.py` should stay small and explicit instead of becoming
+new ownership hubs.
+
+Chapter cache files intentionally store chapter payloads only. Metadata and navigation are still
+loaded through the source registry so grouped output, numbering, and tags continue to come from
+the normalized source document.
 
 ## Troubleshooting
 

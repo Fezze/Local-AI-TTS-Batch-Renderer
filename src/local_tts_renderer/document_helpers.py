@@ -3,8 +3,10 @@ from __future__ import annotations
 import html
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .sources.model import SourceChapter, SourceNavigationNode
+if TYPE_CHECKING:
+    from .sources.model import SourceChapter, SourceNavigationNode
 
 GROUP_PATH_SEPARATOR = " / "
 

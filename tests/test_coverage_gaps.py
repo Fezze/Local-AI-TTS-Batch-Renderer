@@ -295,50 +295,56 @@ def test_scheduler_process_and_jobs_branches(monkeypatch) -> None:
     assert scheduler_jobs.select_next_job([job], worker, statuses, cpu_max_chars=100, gpu_short_first=False) == 0
 
 
-def test_cli_runtime_provider_and_espeak(monkeypatch, tmp_path: Path) -> None:
-    model_dir = tmp_path / "models"
-    model_dir.mkdir()
-    touched: list[Path] = []
-    monkeypatch.setattr(cli_runtime, "ensure_file", lambda path, url: touched.append(path))
-    model_path, voices_path = cli_runtime.ensure_model_files(model_dir)
-    assert touched == [model_path, voices_path]
+def test_cli_runtime_provider_and_espeak(monkeypatch) -> None:
+    tmp_path = _scratch_dir("coverage-provider")
+    try:
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        touched: list[Path] = []
+        monkeypatch.setattr(cli_runtime, "ensure_file", lambda path, url: touched.append(path))
+        model_path, voices_path = cli_runtime.ensure_model_files(model_dir)
+        assert touched == [model_path, voices_path]
 
-    fake_ort = types.SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"])
-    monkeypatch.setattr(cli_runtime, "_ORT", fake_ort)
-    monkeypatch.delenv("ONNX_PROVIDER", raising=False)
-    assert cli_runtime.configure_onnx_provider(["CPUExecutionProvider"]) == "CPUExecutionProvider"
+        fake_ort = types.SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"])
+        monkeypatch.setattr(cli_runtime, "_ORT", fake_ort)
+        monkeypatch.delenv("ONNX_PROVIDER", raising=False)
+        assert cli_runtime.configure_onnx_provider(["CPUExecutionProvider"]) == "CPUExecutionProvider"
 
-    class FakeEspeakAPI:
-        _local_tts_patch_enabled = False
+        class FakeEspeakAPI:
+            _local_tts_patch_enabled = False
 
-        def __init__(self, library, data_path):
-            raise PermissionError("blocked")
+            def __init__(self, library, data_path):
+                raise PermissionError("blocked")
 
-        @staticmethod
-        def _delete(library, tempdir):
-            return None
+            @staticmethod
+            def _delete(library, tempdir):
+                return None
 
-        @staticmethod
-        def _shared_library_path(lib):
-            return Path("libespeak.dll")
+            @staticmethod
+            def _shared_library_path(lib):
+                return Path("libespeak.dll")
 
-        def _delete_win32(self):
-            return None
+            def _delete_win32(self):
+                return None
 
-    fake_api = types.SimpleNamespace(EspeakAPI=FakeEspeakAPI)
-    monkeypatch.setitem(sys.modules, "phonemizer", types.SimpleNamespace(backend=types.SimpleNamespace(espeak=types.SimpleNamespace(api=fake_api))))
-    monkeypatch.setitem(sys.modules, "phonemizer.backend", types.SimpleNamespace(espeak=types.SimpleNamespace(api=fake_api)))
-    monkeypatch.setitem(sys.modules, "phonemizer.backend.espeak", types.SimpleNamespace(api=fake_api))
-    monkeypatch.setitem(sys.modules, "phonemizer.backend.espeak.api", fake_api)
+        fake_api = types.SimpleNamespace(EspeakAPI=FakeEspeakAPI)
+        monkeypatch.setitem(sys.modules, "phonemizer", types.SimpleNamespace(backend=types.SimpleNamespace(espeak=types.SimpleNamespace(api=fake_api))))
+        monkeypatch.setitem(sys.modules, "phonemizer.backend", types.SimpleNamespace(espeak=types.SimpleNamespace(api=fake_api)))
+        monkeypatch.setitem(sys.modules, "phonemizer.backend.espeak", types.SimpleNamespace(api=fake_api))
+        monkeypatch.setitem(sys.modules, "phonemizer.backend.espeak.api", fake_api)
 
-    class FakeLib:
-        def __init__(self):
-            self.espeak_Initialize = lambda *a: 1
+        class FakeLib:
+            def __init__(self):
+                self.espeak_Initialize = lambda *a: 1
 
-    monkeypatch.setattr(cli_runtime.ctypes.cdll, "LoadLibrary", lambda path: FakeLib())
-    monkeypatch.setattr(cli_runtime.os, "name", "nt", raising=False)
-    cli_runtime.enable_windows_espeak_fallback()
-    assert FakeEspeakAPI._local_tts_patch_enabled is True
+        monkeypatch.setattr(cli_runtime.ctypes.cdll, "LoadLibrary", lambda path: FakeLib())
+        monkeypatch.setattr(cli_runtime.os, "name", "nt", raising=False)
+        cli_runtime.enable_windows_espeak_fallback()
+        assert FakeEspeakAPI._local_tts_patch_enabled is True
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp_path, ignore_errors=True)
 
 
 def test_scheduler_process_controls(monkeypatch) -> None:

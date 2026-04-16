@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 from local_tts_renderer.sources import SourceLoadOptions, load_source, supported_suffixes
+from local_tts_renderer.sources.registry import can_load
 
 
 def _mk_tmp_dir() -> Path:
@@ -25,6 +26,21 @@ def test_source_registry_loads_markdown_document() -> None:
         assert ".md" in supported_suffixes()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_source_registry_reports_supported_formats_and_rejects_unknown() -> None:
+    assert ".md" in supported_suffixes()
+    assert ".markdown" in supported_suffixes()
+    assert ".epub" in supported_suffixes()
+    assert can_load(Path("book.md"))
+    assert can_load(Path("book.epub"))
+    assert not can_load(Path("book.pdf"))
+    try:
+        load_source(Path("book.pdf"))
+    except ValueError as exc:
+        assert "Unsupported source format" in str(exc)
+    else:
+        raise AssertionError("expected unsupported source format")
 
 
 def test_source_registry_loads_epub_document() -> None:

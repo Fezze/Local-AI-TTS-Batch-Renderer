@@ -97,44 +97,49 @@ def start_console_controls(
     def run_controls() -> None:
         import msvcrt
 
-        while not stop_event.is_set():
-            if not msvcrt.kbhit():
-                time.sleep(0.1)
-                continue
-            key = msvcrt.getwch()
-            if not key:
-                continue
-            lowered = key.lower()
-            if lowered == "p":
-                if _PAUSE_SCHEDULING.is_set():
-                    _PAUSE_SCHEDULING.clear()
-                    print("[batch:control] resumed", flush=True)
-                else:
-                    _PAUSE_SCHEDULING.set()
-                    print("[batch:control] paused (running jobs continue)", flush=True)
-                with scheduler_condition:
-                    scheduler_condition.notify_all()
-                continue
-            if lowered == "r":
-                terminate_all_active_processes(force=True)
-                print("[batch:control] restart requested for all active workers", flush=True)
-                continue
-            if lowered == "d":
-                enabled = _toggle_debug()
-                print(f"[batch:control] debug {'enabled' if enabled else 'disabled'}", flush=True)
-                continue
-            if lowered in worker_shortcuts:
-                worker_name = worker_shortcuts[lowered]
-                if terminate_active_process(worker_name, force=True):
-                    print(f"[batch:control] restart requested for {worker_name}", flush=True)
-                else:
-                    print(f"[batch:control] {worker_name} is idle", flush=True)
-                continue
-            if lowered == "h":
-                print(
-                    f"[batch:controls] p=pause/resume r=restart-active {shortcut_list}",
-                    flush=True,
-                )
+        try:
+            while not stop_event.is_set():
+                if not msvcrt.kbhit():
+                    time.sleep(0.1)
+                    continue
+                key = msvcrt.getwch()
+                if not key:
+                    continue
+                lowered = key.lower()
+                if lowered == "p":
+                    if _PAUSE_SCHEDULING.is_set():
+                        _PAUSE_SCHEDULING.clear()
+                        print("[batch:control] resumed", flush=True)
+                    else:
+                        _PAUSE_SCHEDULING.set()
+                        print("[batch:control] paused (running jobs continue)", flush=True)
+                    with scheduler_condition:
+                        scheduler_condition.notify_all()
+                    continue
+                if lowered == "r":
+                    terminate_all_active_processes(force=True)
+                    print("[batch:control] restart requested for all active workers", flush=True)
+                    continue
+                if lowered == "d":
+                    enabled = _toggle_debug()
+                    print(f"[batch:control] debug {'enabled' if enabled else 'disabled'}", flush=True)
+                    continue
+                if lowered in worker_shortcuts:
+                    worker_name = worker_shortcuts[lowered]
+                    if terminate_active_process(worker_name, force=True):
+                        print(f"[batch:control] restart requested for {worker_name}", flush=True)
+                    else:
+                        print(f"[batch:control] {worker_name} is idle", flush=True)
+                    continue
+                if lowered == "h":
+                    print(
+                        f"[batch:controls] p=pause/resume r=restart-active {shortcut_list}",
+                        flush=True,
+                    )
+        finally:
+            _PAUSE_SCHEDULING.clear()
+            with scheduler_condition:
+                scheduler_condition.notify_all()
 
     thread = threading.Thread(target=run_controls, name="batch-console-controls", daemon=True)
     thread.start()
