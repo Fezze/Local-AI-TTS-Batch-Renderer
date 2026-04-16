@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .sources import supported_suffixes
 from .defaults import (
     DEFAULT_BOOTSTRAP_SILENCE_TIMEOUT_SECONDS,
     DEFAULT_AGGRESSIVE_GPU_RECOVERY,
@@ -100,10 +101,11 @@ def parse_args() -> argparse.Namespace:
 
 def expand_inputs(items: list[str]) -> list[Path]:
     expanded: list[Path] = []
+    source_suffixes = supported_suffixes()
     for item in items:
         item_path = Path(item)
         if item_path.exists() and item_path.is_dir():
-            expanded.extend(sorted(path for path in item_path.iterdir() if path.is_file() and path.suffix.lower() in {".md", ".epub"}))
+            expanded.extend(sorted(path for path in item_path.iterdir() if path.is_file() and path.suffix.lower() in source_suffixes))
         elif any(ch in item for ch in "*?[]"):
             expanded.extend(sorted(Path().glob(item)))
         else:

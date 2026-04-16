@@ -4,13 +4,14 @@ Szczegoly i pelny kontekst dla ponizszych pozycji sa w [local_tts_renderer_revie
 
 ## P0
 
-- [x] Rozszerzyc testy snapshot/regression dla manifestow i kolejnosci chunkow/rozdzialow na fixture `md` i `epub`.
-- [x] Dokonczyc rozdzial `cli_parsing` od `input_parsers` tak, zeby cache, prezentacja i parsowanie byly rozdzielone bez cienkich re-exportow. `cli_cache.py` i `cli_presentation.py` sa juz wydzielone, zostalo doczyszczenie resztek fasad/importow.
-- [ ] Usunac pozostaly barrel w `cli_core.py` i zastapic go jawnymi eksportami lub tymczasowymi shimami o waskim zakresie.
-- [ ] Domknac pozostale zaleznosci CLI w render/audio flow, zwlaszcza tam gdzie nadal sa punkty wstrzykniecia oparte o fasady.
-- [ ] Uporzadkowac `scheduler_core.py` tak, zeby byl composition root, a nie logic owner. `scheduler_setup.py` juz wydziela budowe runtime, zostalo dalsze odchudzenie glownej petli.
+- [ ] Zbudowac realna warstwe source ingestion i wspolny model posredni. Pierwszy krok jest zaczety w `src/local_tts_renderer/sources`: model, registry oraz ingester Markdown/EPUB.
+- [ ] Rozbic `input_parsers.py`: przeniesc Markdown i EPUB do `sources/markdown.py` oraz `sources/epub.py`, zostawiajac tylko neutralne shared utilities.
+- [ ] Usunac format-specific branching z CLI i batch orchestration (`.epub`, `.md`) przez uzycie `SourceDocument`.
+- [x] Zastapic hardcoded directory scan `.md`/`.epub` rejestrem wspieranych suffixow z `sources`.
+- [ ] Odseparowac Markdown-specific opcje (`md_single_chapter`, `max_chapter_chars`) od generic loading API.
+- [ ] Zweryfikowac i odchudzic `cli_core.py`; `__all__` nie moze reklamowac nazw, ktore nie sa jawnie importowane i wspierane.
+- [ ] Uporzadkowac `scheduler_core.py` tak, zeby byl composition root, a nie logic owner.
 - [ ] Ujednolicic wewnetrzny styl importow na relatywny tam, gdzie to mozliwe.
-- [x] Zastapic top-level `sys.path` bootstrap entrypointow pakietowymi entrypointami z metadanych pakietu. Dodatkowo zostal minimalny bootstrap tylko w `md_to_audio.py` i `run_tts_batch.py` dla bezposredniego uruchamiania skryptow.
 
 ## P1
 
@@ -26,8 +27,9 @@ Szczegoly i pelny kontekst dla ponizszych pozycji sa w [local_tts_renderer_revie
 
 ## P3
 
-- [ ] Dodac nowe formaty wejscia: `DOCX`.
-- [ ] Dodac nowe formaty wejscia: `MOBI`.
+- [ ] Dodac nowe formaty wejscia tylko przez `sources` registry i SourceDocument: `DOCX`.
+- [ ] Dodac nowe formaty wejscia tylko przez `sources` registry i SourceDocument: `MOBI`.
+- [ ] Dodac nowe formaty wejscia tylko przez `sources` registry i SourceDocument: `PDF`.
 
 ## P4
 

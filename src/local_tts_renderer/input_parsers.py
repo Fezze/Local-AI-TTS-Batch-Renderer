@@ -319,10 +319,16 @@ def extract_epub_chapters_dynamic(path: Path) -> list[Chapter]:
 
 
 def load_chapters(source_path: Path, *, single_chapter: bool = False, max_chapter_chars: int = 0) -> list[Chapter]:
-    if source_path.suffix.lower() == ".epub":
-        return extract_epub_chapters_dynamic(source_path)
-    raw_text = source_path.read_text(encoding="utf-8")
-    return split_markdown_chapters(raw_text, fallback_title=source_path.stem, single_chapter=single_chapter, max_chapter_chars=max_chapter_chars)
+    from .sources import SourceLoadOptions, load_source
+
+    document = load_source(
+        source_path,
+        SourceLoadOptions(
+            markdown_single_chapter=single_chapter,
+            markdown_max_chapter_chars=max_chapter_chars,
+        ),
+    )
+    return [Chapter(title=chapter.title, text=chapter.text, group=chapter.group) for chapter in document.chapters]
 
 
 def build_chapter_number_map(chapters: list[Chapter]) -> dict[int, int]:
@@ -376,6 +382,7 @@ __all__ = [
     "build_group_directory_map",
     "build_group_directory_map_from_toc",
     "extract_epub_metadata",
+    "extract_epub_chapters_dynamic",
     "get_group_leaf_title",
     "load_chapters",
     "load_epub_toc_from_path",

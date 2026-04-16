@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from local_tts_renderer.input_parsers import (
+from .input_parsers import (
     build_group_directory_map_from_toc,
     load_chapters,
     load_epub_toc_from_path,
