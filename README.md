@@ -105,6 +105,21 @@ Chapter cache files intentionally store chapter payloads only. Metadata and navi
 loaded through the source registry so grouped output, numbering, and tags continue to come from
 the normalized source document.
 
+## Public Compatibility Surface
+
+The intended stable entrypoints are:
+
+- `local_tts_renderer.tts_main`
+- `local_tts_renderer.batch_main`
+- `local_tts_renderer.cli.main`
+- `local_tts_renderer.scheduler.main`
+- `local_tts_renderer.sources.load_source`
+- `local_tts_renderer.sources.supported_suffixes`
+
+The modules `input_parsers.py`, `cli_core.py`, `render.py`, `chunking.py`, and `scheduler.py`
+also expose small compatibility surfaces for existing callers. Keep those surfaces thin and
+intentional; new implementation ownership should live in the underlying modules.
+
 ## Troubleshooting
 
 - No GPU provider detected: verify ONNX Runtime GPU package and driver stack.

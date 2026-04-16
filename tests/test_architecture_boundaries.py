@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from local_tts_renderer import cli_core, cli_entry
+from local_tts_renderer import chunking, cli_core, cli_entry, render, scheduler
 from local_tts_renderer.sources.model import SourceChapter, SourceDocument, SourceMetadata, SourceNavigationNode
 
 
@@ -36,6 +36,30 @@ def test_orchestration_uses_source_layer_without_legacy_escape_hatches() -> None
 
 def test_cli_core_stays_minimal() -> None:
     assert cli_core.__all__ == ["main", "parse_args"]
+
+
+def test_public_compatibility_shims_stay_small() -> None:
+    assert render.__all__ == ["render_audio", "write_mp3_from_audio", "write_mp3_from_wav"]
+    assert chunking.__all__ == [
+        "build_chunks",
+        "chunk_section",
+        "split_paragraphs",
+        "split_sentences",
+        "split_text_for_retry",
+    ]
+    assert scheduler.__all__ == [
+        "ChapterJob",
+        "WorkerConfig",
+        "WorkerStatus",
+        "build_worker_command",
+        "choose_worker_max_chars",
+        "cpu_allowed_chunk_budget",
+        "main",
+        "parse_args",
+        "resolve_worker_silence_timeout",
+        "select_next_job",
+        "update_worker_phase",
+    ]
 
 
 def test_cached_chapters_keep_document_metadata_and_navigation_context() -> None:
