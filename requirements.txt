@@ -1,5 +1,10 @@
 kokoro-onnx==0.4.7
 onnxruntime-gpu==1.24.4
+nvidia-cublas-cu12; platform_system == "Linux"
+nvidia-cuda-runtime-cu12; platform_system == "Linux"
+nvidia-cudnn-cu12; platform_system == "Linux"
+nvidia-cufft-cu12; platform_system == "Linux"
+nvidia-curand-cu12; platform_system == "Linux"
 soundfile>=0.12.1
 numpy>=1.26
 requests>=2.32

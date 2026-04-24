@@ -12,7 +12,7 @@ import zipfile
 import threading
 from pathlib import Path
 
-from local_tts_renderer import cli_cache, cli_entry, cli_presentation, cli_runtime, input_parsers as cli_parsing, scheduler_jobs, scheduler_process
+from local_tts_renderer import cli_cache, cli_entry, cli_presentation, cli_runtime, input_parsers as cli_parsing, scheduler_jobs, scheduler_process, scheduler_setup
 from local_tts_renderer.cli_models import AudioMetadata, GROUP_PATH_SEPARATOR
 from local_tts_renderer.input_parsers import Chapter, TocNode, get_group_leaf_title
 from local_tts_renderer.scheduler_types import ChapterJob, WorkerConfig, WorkerStatus
@@ -295,6 +295,33 @@ def test_scheduler_process_and_jobs_branches(monkeypatch) -> None:
     assert scheduler_jobs.select_next_job([job], worker, statuses, cpu_max_chars=100, gpu_short_first=False) == 0
 
 
+def test_scheduler_runtime_keeps_venv_python_symlink(monkeypatch) -> None:
+    tmp_path = _scratch_dir("coverage-scheduler-runtime")
+    try:
+        source = tmp_path / "source.md"
+        source.write_text("# T\nBody", encoding="utf-8")
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        venv_python = tmp_path / ".venv" / "bin" / "python"
+        args = argparse.Namespace(
+            providers="CUDAExecutionProvider,CPUExecutionProvider",
+            gpu_workers=1,
+            cpu_workers=0,
+            debug=False,
+        )
+        monkeypatch.setattr(scheduler_setup.sys, "executable", str(venv_python))
+        monkeypatch.setattr(scheduler_setup, "probe_available_providers", lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"])
+        monkeypatch.setattr(scheduler_setup, "prepare_worker_temp_dirs", lambda workers: (tmp_path / "tmp", {w.name: tmp_path / "tmp" / w.name for w in workers}))
+
+        runtime = scheduler_setup.prepare_scheduler_runtime(args, [source], output_dir)
+
+        assert runtime.python_exe == venv_python
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_cli_runtime_provider_and_espeak(monkeypatch) -> None:
     tmp_path = _scratch_dir("coverage-provider")
     try:
@@ -309,6 +336,15 @@ def test_cli_runtime_provider_and_espeak(monkeypatch) -> None:
         monkeypatch.setattr(cli_runtime, "_ORT", fake_ort)
         monkeypatch.delenv("ONNX_PROVIDER", raising=False)
         assert cli_runtime.configure_onnx_provider(["CPUExecutionProvider"]) == "CPUExecutionProvider"
+
+        preload_calls: list[dict] = []
+        fake_ort_with_preload = types.SimpleNamespace(
+            preload_dlls=lambda **kwargs: preload_calls.append(kwargs),
+        )
+        monkeypatch.setattr(cli_runtime, "_ORT", None)
+        monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort_with_preload)
+        assert cli_runtime.get_onnxruntime() is fake_ort_with_preload
+        assert preload_calls == [{"directory": ""}]
 
         class FakeEspeakAPI:
             _local_tts_patch_enabled = False

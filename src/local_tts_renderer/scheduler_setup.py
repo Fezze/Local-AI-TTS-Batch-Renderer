@@ -54,7 +54,7 @@ def prepare_scheduler_runtime(args, inputs: list[Path], output_dir: Path) -> Sch
     )
     workers = build_worker_configs(worker_providers)
     run_tmp_root, worker_temp_dirs = prepare_worker_temp_dirs(workers)
-    python_exe = Path(sys.executable).resolve()
+    python_exe = Path(sys.executable)
     script_path = Path(__file__).resolve().parents[2] / "md_to_audio.py"
     runner_log = (output_dir / slugify(inputs[0].stem) / "runner.jsonl") if len(inputs) == 1 else (output_dir / "runner.jsonl")
     debug_log(args.debug, f"python_exe={python_exe} script_path={script_path}")

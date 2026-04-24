@@ -195,6 +195,12 @@ def get_onnxruntime():
         print("[run:bootstrap] loading onnxruntime...", flush=True)
         import onnxruntime as ort  # type: ignore
 
+        preload_dlls = getattr(ort, "preload_dlls", None)
+        if callable(preload_dlls):
+            try:
+                preload_dlls(directory="")
+            except Exception as exc:
+                debug_trace(f"onnxruntime_cuda_preload_failed error={exc!r}")
         _ORT = ort
     return _ORT
 
