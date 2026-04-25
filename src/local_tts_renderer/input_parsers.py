@@ -33,12 +33,19 @@ def build_group_directory_map_from_toc(nodes: list[TocNode], selected_groups: se
     return build_group_directory_map_from_navigation(_navigation_from_toc(nodes), selected_groups)
 
 
-def load_chapters(source_path: Path, *, single_chapter: bool = False, max_chapter_chars: int = 0) -> list[Chapter]:
+def load_chapters(
+    source_path: Path,
+    *,
+    single_chapter: bool = False,
+    max_chapter_chars: int = 0,
+    chapter_heading_level: int = 0,
+) -> list[Chapter]:
     document = load_source(
         source_path,
         SourceLoadOptions(
             markdown_single_chapter=single_chapter,
             markdown_max_chapter_chars=max_chapter_chars,
+            markdown_chapter_heading_level=chapter_heading_level,
         ),
     )
     return document.chapters

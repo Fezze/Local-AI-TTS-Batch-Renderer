@@ -51,6 +51,7 @@ def main() -> int:
         debug=args.debug,
         md_single_chapter=getattr(args, "md_single_chapter", False),
         max_chapter_chars=getattr(args, "max_chapter_chars", 0),
+        md_chapter_heading_level=getattr(args, "md_chapter_heading_level", 0),
         max_chars=args.max_chars,
         max_phoneme_chars=getattr(args, "max_phoneme_chars", 0),
     )

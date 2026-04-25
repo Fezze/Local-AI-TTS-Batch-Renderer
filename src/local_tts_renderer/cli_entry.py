@@ -48,13 +48,19 @@ def expand_inputs(paths: list[str]) -> list[Path]:
     return unique
 
 
-def _load_document_for_source(source_path: Path, md_single_chapter: bool, max_chapter_chars: int) -> SourceDocument:
+def _load_document_for_source(
+    source_path: Path,
+    md_single_chapter: bool,
+    max_chapter_chars: int,
+    md_chapter_heading_level: int,
+) -> SourceDocument:
     return load_source(
         source_path,
         SourceLoadOptions(
             markdown=MarkdownIngestOptions(
                 single_chapter=md_single_chapter,
                 max_chapter_chars=max_chapter_chars,
+                chapter_heading_level=md_chapter_heading_level,
             )
         ),
     )
@@ -82,6 +88,7 @@ def main() -> int:
     args = parse_args()
     md_single_chapter = getattr(args, "md_single_chapter", False)
     max_chapter_chars = getattr(args, "max_chapter_chars", 0)
+    md_chapter_heading_level = getattr(args, "md_chapter_heading_level", 0)
     max_phoneme_chars = getattr(args, "max_phoneme_chars", 0)
     if args.wav_to_mp3:
         wav_path = Path(args.wav_to_mp3).resolve()
@@ -115,7 +122,7 @@ def main() -> int:
 
     if args.list_chapters:
         for source_path in inputs:
-            document = _load_document_for_source(source_path, md_single_chapter, max_chapter_chars)
+            document = _load_document_for_source(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
             chapters = [chapter for chapter in document.chapters if chapter.text and chapter.text.strip()]
             if document.navigation:
                 print(f"Source: {source_path}")
@@ -163,7 +170,7 @@ def main() -> int:
             print(f"[run:warmup] failed error={exc}", flush=True)
 
     for source_path in inputs:
-        document = _load_document_for_source(source_path, md_single_chapter, max_chapter_chars)
+        document = _load_document_for_source(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
         if args.chapter_cache and args.chapter_index is not None:
             cache_path = Path(args.chapter_cache).resolve()
             if cache_path.exists():

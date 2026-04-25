@@ -33,13 +33,19 @@ from .scheduler_types import (
 )
 
 
-def _load_document_for_jobs(source_path: Path, md_single_chapter: bool, max_chapter_chars: int) -> SourceDocument:
+def _load_document_for_jobs(
+    source_path: Path,
+    md_single_chapter: bool,
+    max_chapter_chars: int,
+    md_chapter_heading_level: int,
+) -> SourceDocument:
     return load_source(
         source_path,
         SourceLoadOptions(
             markdown=MarkdownIngestOptions(
                 single_chapter=md_single_chapter,
                 max_chapter_chars=max_chapter_chars,
+                chapter_heading_level=md_chapter_heading_level,
             )
         ),
     )
@@ -101,6 +107,7 @@ def build_jobs(
     *,
     md_single_chapter: bool = False,
     max_chapter_chars: int = 0,
+    md_chapter_heading_level: int = 0,
     max_chars: int = DEFAULT_MAX_CHARS,
     max_phoneme_chars: int = 0,
 ) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
@@ -113,7 +120,7 @@ def build_jobs(
         source_started = time.time()
         print(f"[batch:scan] source_start path={source_path}", flush=True)
         chapters_load_started = time.time()
-        document = _load_document_for_jobs(source_path, md_single_chapter, max_chapter_chars)
+        document = _load_document_for_jobs(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
         source_chapters = document.chapters
         chapters = [chapter for chapter in source_chapters if chapter.text and chapter.text.strip()]
         if chapters is not document.chapters:
@@ -266,6 +273,12 @@ def build_worker_command(
     ]
     if getattr(args, "max_phoneme_chars", 0) > 0:
         command.extend(["--max-phoneme-chars", str(args.max_phoneme_chars)])
+    if getattr(args, "md_single_chapter", False):
+        command.append("--md-single-chapter")
+    if getattr(args, "md_chapter_heading_level", 0) > 0:
+        command.extend(["--md-chapter-heading-level", str(args.md_chapter_heading_level)])
+    if getattr(args, "max_chapter_chars", 0) > 0:
+        command.extend(["--max-chapter-chars", str(args.max_chapter_chars)])
     if cache_path is not None:
         command.extend(["--chapter-cache", str(cache_path)])
     if args.force:

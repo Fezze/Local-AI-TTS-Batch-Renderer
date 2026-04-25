@@ -60,6 +60,15 @@ def test_parse_args_allows_disabling_mp3_only(monkeypatch) -> None:
     assert args.mp3_only is False
 
 
+def test_parse_args_accepts_markdown_chapter_heading_level(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["md_to_audio.py", "--input", "neutral.md", "--md-chapter-heading-level", "2"],
+    )
+    args = cli.parse_args()
+    assert args.md_chapter_heading_level == 2
+
+
 def test_text_processing_helpers() -> None:
     md = "# Intro\nHello [x](https://e) `code`"
     cleaned = cli.clean_markdown(md)

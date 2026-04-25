@@ -8,6 +8,8 @@ from .registry_types import SourceLoadOptions
 
 
 SUPPORTED_SUFFIXES = frozenset({".md", ".markdown"})
+MAX_CHAPTER_HEADING_LEVEL = 4
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 
 
 def can_load(path: Path) -> bool:
@@ -75,12 +77,34 @@ def _split_text_by_limit(text: str, max_length: int) -> list[str]:
     return parts or [text]
 
 
+def _resolve_chapter_heading_level(lines: list[str], requested_level: int) -> int:
+    if requested_level < 0 or requested_level > MAX_CHAPTER_HEADING_LEVEL:
+        raise ValueError(f"Markdown chapter heading level must be between 0 and {MAX_CHAPTER_HEADING_LEVEL}.")
+    if requested_level > 0:
+        return requested_level
+
+    counts = {level: 0 for level in range(1, MAX_CHAPTER_HEADING_LEVEL + 1)}
+    for line in lines:
+        match = HEADING_RE.match(line.strip())
+        if not match:
+            continue
+        level = len(match.group(1))
+        if level <= MAX_CHAPTER_HEADING_LEVEL:
+            counts[level] += 1
+
+    for level in range(1, MAX_CHAPTER_HEADING_LEVEL + 1):
+        if counts[level] > 1:
+            return level
+    return MAX_CHAPTER_HEADING_LEVEL
+
+
 def split_markdown_chapters(
     text: str,
     fallback_title: str,
     *,
     single_chapter: bool = False,
     max_chapter_chars: int = 0,
+    chapter_heading_level: int = 0,
 ) -> list[SourceChapter]:
     if single_chapter:
         cleaned = clean_markdown(text)
@@ -91,17 +115,18 @@ def split_markdown_chapters(
             ]
         return [SourceChapter(title=fallback_title, text=cleaned)]
     lines = text.replace("\r\n", "\n").splitlines()
+    selected_heading_level = _resolve_chapter_heading_level(lines, chapter_heading_level)
     chapters: list[SourceChapter] = []
     current_title: str | None = None
     current_lines: list[str] = []
     for line in lines:
-        match = re.match(r"^#\s+(.+)$", line.strip())
-        if match:
+        match = HEADING_RE.match(line.strip())
+        if match and len(match.group(1)) <= selected_heading_level:
             if current_lines:
                 chapter_text = clean_markdown("\n".join(current_lines))
                 if chapter_text:
                     chapters.append(SourceChapter(title=current_title or fallback_title, text=chapter_text))
-            current_title = match.group(1).strip()
+            current_title = match.group(2).strip()
             current_lines = []
             continue
         current_lines.append(line)
@@ -130,6 +155,7 @@ def load(path: Path, options: SourceLoadOptions | None = None) -> SourceDocument
         fallback_title=path.stem,
         single_chapter=options.markdown.single_chapter,
         max_chapter_chars=options.markdown.max_chapter_chars,
+        chapter_heading_level=options.markdown.chapter_heading_level,
     )
     return SourceDocument(
         path=path,

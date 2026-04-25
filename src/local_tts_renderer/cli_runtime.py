@@ -24,7 +24,13 @@ from .cli_models import (
     MODEL_URL,
     VOICES_URL,
 )
-from .defaults import DEFAULT_MAX_PHONEME_CHARS, DEFAULT_MP3_ONLY, DEFAULT_OUTPUT_DIR, DEFAULT_WARMUP_TEXT
+from .defaults import (
+    DEFAULT_MAX_PHONEME_CHARS,
+    DEFAULT_MD_CHAPTER_HEADING_LEVEL,
+    DEFAULT_MP3_ONLY,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_WARMUP_TEXT,
+)
 from .providers import resolve_provider
 
 _ORT = None
@@ -59,6 +65,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-subdir", help="Optional output subdirectory under --output-dir for chapter batch jobs.")
     parser.add_argument("--output-name", help="Optional base output name for chapter batch jobs.")
     parser.add_argument("--md-single-chapter", action="store_true", help="Treat Markdown input as one chapter instead of splitting on headings.")
+    parser.add_argument(
+        "--md-chapter-heading-level",
+        type=int,
+        choices=range(0, 5),
+        default=DEFAULT_MD_CHAPTER_HEADING_LEVEL,
+        metavar="0-4",
+        help="Markdown chapter split depth: 0 auto, 1 '#', 2 '#/##', up to 4.",
+    )
     parser.add_argument("--max-chapter-chars", type=int, default=0, help="Maximum character count per Markdown chapter. 0 disables extra splitting.")
     parser.add_argument("--trim-mode", choices=["full", "light", "off"], default=DEFAULT_TRIM_MODE, help="Silence trimming mode.")
     parser.add_argument("--heartbeat-seconds", type=float, default=DEFAULT_HEARTBEAT_SECONDS, help="Emit periodic heartbeat lines while rendering.")

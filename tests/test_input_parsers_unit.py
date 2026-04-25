@@ -23,6 +23,18 @@ def test_clean_markdown_and_split_chapters() -> None:
     assert "`" not in chapters[0].text
 
 
+def test_split_markdown_auto_uses_deeper_heading_when_h1_is_single_container() -> None:
+    raw = "# Part II\n\n## Chapter 1\nOne\n\n## Chapter 2\nTwo"
+    chapters = ip.split_markdown_chapters(raw, fallback_title="Fallback")
+    assert [chapter.title for chapter in chapters] == ["Chapter 1", "Chapter 2"]
+
+
+def test_split_markdown_explicit_heading_level_includes_parent_headings() -> None:
+    raw = "# Part One\nIntro\n\n## Chapter 1\nOne\n\n# Part Two\nIntro two\n\n## Chapter 2\nTwo"
+    chapters = ip.split_markdown_chapters(raw, fallback_title="Fallback", chapter_heading_level=2)
+    assert [chapter.title for chapter in chapters] == ["Part One", "Chapter 1", "Part Two", "Chapter 2"]
+
+
 def test_split_markdown_single_chapter_and_limit() -> None:
     text = "# One\nA\n\n# Two\nB " + ("c" * 120)
     single = ip.split_markdown_chapters(text, fallback_title="Fallback", single_chapter=True)

@@ -151,7 +151,8 @@ def test_parse_args_disables_gpu_bootstrap_serialization_when_requested(monkeypa
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_tts_batch.py", "--input", "book.epub", "--no-serialize-gpu-bootstrap"],
+        ["run_tts_batch.py", "--input", "book.epub", "--no-serialize-gpu-bootstrap", "--md-chapter-heading-level", "2"],
     )
     args = parse_args()
     assert args.serialize_gpu_bootstrap is False
+    assert args.md_chapter_heading_level == 2

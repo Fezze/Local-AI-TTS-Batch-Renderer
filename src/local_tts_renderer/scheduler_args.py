@@ -26,6 +26,7 @@ from .defaults import (
     DEFAULT_MAX_PHONEME_CHARS,
     DEFAULT_MAX_PART_MINUTES,
     DEFAULT_MAX_RETRIES,
+    DEFAULT_MD_CHAPTER_HEADING_LEVEL,
     DEFAULT_MD_SINGLE_CHAPTER,
     DEFAULT_MP3_ONLY,
     DEFAULT_NO_CONSOLE_CONTROLS,
@@ -53,6 +54,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--keep-chunks", action="store_true", default=DEFAULT_KEEP_CHUNKS)
     parser.add_argument("--fresh", action="store_true", default=DEFAULT_FRESH, help="Delete existing resume checkpoint for each input before starting.")
     parser.add_argument("--md-single-chapter", action="store_true", default=DEFAULT_MD_SINGLE_CHAPTER, help="Treat Markdown input as one chapter instead of splitting on headings.")
+    parser.add_argument(
+        "--md-chapter-heading-level",
+        type=int,
+        choices=range(0, 5),
+        default=DEFAULT_MD_CHAPTER_HEADING_LEVEL,
+        metavar="0-4",
+        help="Markdown chapter split depth: 0 auto, 1 '#', 2 '#/##', up to 4.",
+    )
     parser.add_argument("--max-chapter-chars", type=int, default=DEFAULT_MAX_CHAPTER_CHARS, help="Maximum character count per Markdown chapter. 0 disables extra splitting.")
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="Retry failed chapter jobs this many times.")
     parser.add_argument("--cpu-max-chars", type=int, default=DEFAULT_CPU_MAX_CHARS, help="CPU worker only takes jobs up to this estimated text size while GPUs are available.")
