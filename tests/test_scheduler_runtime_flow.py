@@ -193,3 +193,80 @@ def test_run_worker_timeout_path(monkeypatch) -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+
+def test_run_worker_prints_final_job_error(monkeypatch, capsys) -> None:
+    tmp = _mk_tmp_dir()
+    try:
+        output_dir = tmp / "out"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        source = tmp / "neutral.md"
+        source.write_text("# T\nx", encoding="utf-8")
+        job = ChapterJob(
+            source_path=source,
+            chapter_index=3,
+            chapter_title="Neutral Failure",
+            output_subdir="neutral",
+            output_name="03-Neutral Failure",
+            estimated_chars=100,
+            estimated_chunks=1,
+            attempt=1,
+        )
+        worker = WorkerConfig(name="cpu-1", provider="CPUExecutionProvider")
+        args = _base_args(output_dir)
+        args.max_retries = 0
+        pending_jobs = [job]
+        statuses = {worker.name: WorkerStatus(idle_since=0.0)}
+        counters = {"active": 0, "done": 0, "failed": 0, "completed_chunks": 0}
+        condition = threading.Condition()
+        logs: list[dict] = []
+
+        monkeypatch.setattr(sr, "choose_worker_max_chars", lambda *a, **k: 900)
+        monkeypatch.setattr(sr, "build_worker_command", lambda **k: ["python", "-u", "dummy.py"])
+        monkeypatch.setattr(sr, "append_runner_log", lambda _p, payload: logs.append(payload))
+        monkeypatch.setattr(sr, "print_batch_summary", lambda *a, **k: None)
+        monkeypatch.setattr(sr, "clear_directory_contents", lambda *_a, **_k: None)
+        monkeypatch.setattr(sr, "is_scheduler_paused", lambda: False)
+        monkeypatch.setattr(sr, "debug_log", lambda *_a, **_k: None)
+        monkeypatch.setattr(sr, "print_worker_progress", lambda *_a, **_k: None)
+        monkeypatch.setattr(sr, "resolve_worker_silence_timeout", lambda *_a, **_k: 2.0)
+
+        class FailingProcess:
+            def __init__(self):
+                self.stdout = io.StringIO("Missing Python dependency 'numpy'. Run ./scripts/setup.sh and rerun.\n")
+                self.returncode = None
+                self.pid = 1002
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):  # type: ignore[no-untyped-def]
+                self.returncode = 1
+                return 1
+
+        monkeypatch.setattr(sr.subprocess, "Popen", lambda *a, **k: FailingProcess())
+
+        sr.run_worker(
+            worker=worker,
+            pending_jobs=pending_jobs,
+            args=args,
+            runner_log=output_dir / "runner.jsonl",
+            python_exe=Path("python"),
+            script_path=tmp / "md_to_audio.py",
+            total_jobs=1,
+            total_chunks=1,
+            statuses=statuses,
+            counters=counters,
+            scheduler_condition=condition,
+            batch_started_at=0.0,
+            worker_temp_dirs={worker.name: tmp / "tmp-worker"},
+            chapter_cache_map={source: tmp / "cache.json"},
+            gpu_bootstrap_lock=threading.Lock(),
+        )
+        output = capsys.readouterr().out
+        assert "[batch:error]" in output
+        assert "Missing Python dependency 'numpy'" in output
+        assert counters["failed"] == 1
+        assert any(entry.get("event") == "finish" for entry in logs)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+

@@ -48,6 +48,15 @@ install_python_requirements() {
   fi
 }
 
+venv_python_ready() {
+  [[ -x ./.venv/bin/python ]] && ./.venv/bin/python -V >/dev/null 2>&1
+}
+
+if [[ -d ".venv" ]] && ! venv_python_ready; then
+  echo "Existing .venv is broken; recreating it." >&2
+  rm -rf .venv
+fi
+
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [ ! -d ".venv" ]; then
   if [ -n "$PYTHON_BIN" ]; then

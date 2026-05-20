@@ -42,7 +42,7 @@ from .defaults import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local TTS jobs with 2 GPU workers and 1 CPU worker.")
     parser.add_argument("--input", nargs="+", required=True, help="Input files, directories, or glob patterns.")
-    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated output.")
+    parser.add_argument("--output-dir", "--out", dest="output_dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated output.")
     parser.add_argument("--voice", default=DEFAULT_VOICE)
     parser.add_argument("--speed", type=float, default=DEFAULT_SPEED)
     parser.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)

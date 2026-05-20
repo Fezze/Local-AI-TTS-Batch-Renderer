@@ -70,6 +70,17 @@ def test_scheduler_args_allow_disabling_mp3_only(monkeypatch) -> None:
     assert args.mp3_only is False
 
 
+def test_scheduler_args_accept_out_alias(monkeypatch) -> None:
+    from local_tts_renderer import scheduler_args
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["scheduler.py", "--input", "dummy.md", "--out", "tmp-out"],
+    )
+    args = scheduler_args.parse_args()
+    assert args.output_dir == "tmp-out"
+
+
 def test_scheduler_main_happy_path(monkeypatch) -> None:
     tmp = _mk_tmp_dir()
     try:

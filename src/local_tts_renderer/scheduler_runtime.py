@@ -40,6 +40,28 @@ from .scheduler_process import (
 from .scheduler_types import ChapterJob, WorkerConfig, WorkerStatus, WORKER_WAIT_LOG_INTERVAL_SECONDS
 
 
+def summarize_job_failure(job_log: Path) -> str | None:
+    if not job_log.exists():
+        return None
+
+    last_line: str | None = None
+    with job_log.open("r", encoding="utf-8", errors="replace") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if line:
+                last_line = line
+    if not last_line:
+        return None
+    return last_line[:240]
+
+
+def print_final_job_failure(worker: WorkerConfig, job: ChapterJob, job_log: Path) -> None:
+    summary = summarize_job_failure(job_log)
+    if summary:
+        print(f"[batch:error] worker={worker.name} chapter={job.chapter_index} detail={summary}", flush=True)
+    print(f"[batch:error] worker={worker.name} chapter={job.chapter_index} log={job_log}", flush=True)
+
+
 def run_worker(
     worker: WorkerConfig,
     pending_jobs: list[ChapterJob],
@@ -385,6 +407,7 @@ def run_worker(
                     if job.fallback_locked:
                         counters["failed"] += 1
                         debug_log(args.debug, f"worker_failed_final chapter={job.chapter_index} reason=fallback_locked")
+                        print_final_job_failure(worker, job, job_log)
                         statuses[worker.name] = WorkerStatus(idle_since=time.time())
                         print_batch_summary(statuses, total_jobs, counters["done"], counters["failed"], counters["completed_chunks"], total_chunks, batch_started_at)
                         scheduler_condition.notify_all()
@@ -432,6 +455,7 @@ def run_worker(
                 else:
                     counters["failed"] += 1
                     debug_log(args.debug, f"worker_failed_final chapter={job.chapter_index} attempts={job.attempt}")
+                    print_final_job_failure(worker, job, job_log)
             if (saw_cuda_error or timed_out) and worker.provider != "CPUExecutionProvider":
                 recovery_seconds = max(args.gpu_recovery_seconds, 1.0)
                 if args.aggressive_gpu_recovery:

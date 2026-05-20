@@ -60,6 +60,15 @@ def test_parse_args_allows_disabling_mp3_only(monkeypatch) -> None:
     assert args.mp3_only is False
 
 
+def test_parse_args_accepts_out_alias(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["md_to_audio.py", "--input", "neutral.md", "--out", "tmp-out"],
+    )
+    args = cli.parse_args()
+    assert args.output_dir == "tmp-out"
+
+
 def test_parse_args_accepts_markdown_chapter_heading_level(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
@@ -231,3 +240,19 @@ def test_output_part_writer_fails_fast_when_output_exists(monkeypatch) -> None:
         assert calls == []
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_mp3_encoding_reports_missing_lameenc(monkeypatch) -> None:
+    monkeypatch.setattr(cli_audio_utils, "_lameenc", None)
+    try:
+        cli.write_mp3_from_audio(
+            np.zeros(16, dtype=np.float32),
+            sample_rate=24000,
+            mp3_path=Path("missing.mp3"),
+            bitrate_kbps=64,
+            force=True,
+        )
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as exc:
+        assert "lameenc" in str(exc)
+        assert "requirements.txt" in str(exc)

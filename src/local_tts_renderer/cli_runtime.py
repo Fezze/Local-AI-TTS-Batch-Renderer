@@ -40,7 +40,7 @@ _KOKORO_CLASS = None
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert English Markdown files to speech with Kokoro ONNX.")
     parser.add_argument("--input", nargs="+", help="Markdown file(s) to process.")
-    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated audio and manifests.")
+    parser.add_argument("--output-dir", "--out", dest="output_dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated audio and manifests.")
     parser.add_argument("--model-dir", default="models", help="Directory for Kokoro model files.")
     parser.add_argument("--voice", default=DEFAULT_VOICE, help="Kokoro voice id, for example af_bella.")
     parser.add_argument("--lang", default=DEFAULT_LANG, help="Language code for Kokoro ONNX.")

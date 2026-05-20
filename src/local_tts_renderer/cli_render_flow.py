@@ -4,12 +4,12 @@ import json
 import time
 from pathlib import Path
 
-import lameenc
 import numpy as np
 import soundfile as sf
 
 from .cli_audio_utils import (
     build_temp_part_base_name,
+    build_mp3_encoder,
     compute_part_output_paths,
     create_audio_with_retry,
     cross_process_io_gate,
@@ -62,11 +62,7 @@ class OutputPartWriter:
             self.wav_path.parent.mkdir(parents=True, exist_ok=True)
         self.mp3_path.parent.mkdir(parents=True, exist_ok=True)
         self.wav_file = None if self.mp3_only else sf.SoundFile(str(self.wav_path), mode="w", samplerate=sample_rate, channels=1, subtype="PCM_16")
-        self.encoder = lameenc.Encoder()
-        self.encoder.set_bit_rate(192)
-        self.encoder.set_in_sample_rate(sample_rate)
-        self.encoder.set_channels(1)
-        self.encoder.set_quality(2)
+        self.encoder = build_mp3_encoder(sample_rate=sample_rate, bitrate_kbps=192, channels=1)
         self.mp3_handle = self.mp3_path.open("wb")
         self.chapter_titles: list[str] = []
         self.start_chunk: int | None = None

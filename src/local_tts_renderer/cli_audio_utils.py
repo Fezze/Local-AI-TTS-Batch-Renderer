@@ -7,15 +7,34 @@ import re
 import time
 from pathlib import Path
 
-import lameenc
 import numpy as np
 import soundfile as sf
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, COMM, ID3NoHeaderError, TPUB
 
+try:
+    import lameenc as _lameenc
+except ModuleNotFoundError:
+    _lameenc = None
+
 from .cli_chunking_utils import split_text_for_retry
 from .cli_models import AudioMetadata
 from .document_helpers import get_group_leaf_title, sanitize_filename_component
+
+
+def build_mp3_encoder(*, sample_rate: int, bitrate_kbps: int, channels: int):
+    if _lameenc is None:
+        raise RuntimeError(
+            "MP3 encoding requires the optional dependency 'lameenc'. "
+            "Install project dependencies with ./scripts/setup.sh or python -m pip install -r requirements.txt."
+        )
+
+    encoder = _lameenc.Encoder()
+    encoder.set_bit_rate(bitrate_kbps)
+    encoder.set_in_sample_rate(sample_rate)
+    encoder.set_channels(channels)
+    encoder.set_quality(2)
+    return encoder
 
 
 def light_trim_audio(samples: np.ndarray, sample_rate: int, threshold: float = 0.003, padding_ms: int = 40) -> np.ndarray:
@@ -190,11 +209,7 @@ def write_mp3_from_wav(wav_path: Path, mp3_path: Path, bitrate_kbps: int, force:
         pcm = np.clip(audio, -1.0, 1.0)
         interleaved = (pcm * 32767.0).astype(np.int16).reshape(-1)
 
-    encoder = lameenc.Encoder()
-    encoder.set_bit_rate(bitrate_kbps)
-    encoder.set_in_sample_rate(sample_rate)
-    encoder.set_channels(channels)
-    encoder.set_quality(2)
+    encoder = build_mp3_encoder(sample_rate=sample_rate, bitrate_kbps=bitrate_kbps, channels=channels)
 
     mp3_bytes = encoder.encode(interleaved.tobytes())
     mp3_bytes += encoder.flush()
@@ -216,11 +231,7 @@ def write_mp3_from_audio(audio: np.ndarray, sample_rate: int, mp3_path: Path, bi
         pcm = np.clip(audio, -1.0, 1.0)
         interleaved = (pcm * 32767.0).astype(np.int16).reshape(-1)
 
-    encoder = lameenc.Encoder()
-    encoder.set_bit_rate(bitrate_kbps)
-    encoder.set_in_sample_rate(sample_rate)
-    encoder.set_channels(channels)
-    encoder.set_quality(2)
+    encoder = build_mp3_encoder(sample_rate=sample_rate, bitrate_kbps=bitrate_kbps, channels=channels)
 
     mp3_bytes = encoder.encode(interleaved.tobytes())
     mp3_bytes += encoder.flush()

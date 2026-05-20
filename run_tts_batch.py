@@ -11,9 +11,23 @@ def _bootstrap_src_path() -> None:
         sys.path.insert(0, src_dir_str)
 
 
-_bootstrap_src_path()
+def _load_main():
+    try:
+        from local_tts_renderer.scheduler import main as imported_main
+    except ModuleNotFoundError as exc:
+        missing = exc.name or "unknown"
+        if missing.startswith("local_tts_renderer"):
+            raise
+        print(
+            f"Missing Python dependency '{missing}'. Run ./scripts/setup.sh and rerun with ./.venv/bin/python {Path(__file__).name} ...",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from exc
+    return imported_main
 
-from local_tts_renderer.scheduler import main
+
+_bootstrap_src_path()
+main = _load_main()
 
 
 if __name__ == "__main__":
