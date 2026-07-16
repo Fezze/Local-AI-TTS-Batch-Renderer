@@ -11,6 +11,7 @@ from .providers import build_worker_provider_list, parse_provider_priority, prob
 from .scheduler_jobs import (
     build_jobs,
     prepare_worker_temp_dirs,
+    reset_job_for_fresh_run,
 )
 from .scheduler_logging import append_runner_log, debug_log, timestamp
 from .scheduler_process import (
@@ -48,6 +49,7 @@ def main() -> int:
         inputs,
         output_dir,
         args.fresh,
+        force=args.force,
         debug=args.debug,
         md_single_chapter=getattr(args, "md_single_chapter", False),
         max_chapter_chars=getattr(args, "max_chapter_chars", 0),
@@ -61,6 +63,9 @@ def main() -> int:
             return 0
         print("No chapter jobs found.")
         return 2
+    if args.fresh:
+        for job in chapter_jobs:
+            reset_job_for_fresh_run(output_dir, job)
     print(f"[batch:plan] chapter_jobs={len(chapter_jobs)} skipped_completed={len(skipped_jobs)}", flush=True)
 
     runtime = prepare_scheduler_runtime(args, inputs, output_dir)
@@ -116,12 +121,19 @@ def main() -> int:
     except KeyboardInterrupt:
         terminate_all_active_processes(force=True)
         print("[batch] interrupted | terminated active worker processes", flush=True)
+        done_jobs = counters["done"]
+        failed_jobs = counters["failed"]
+        pending_count = max(len(pending_jobs), len(chapter_jobs) - done_jobs - failed_jobs, 0)
         append_runner_log(
             runner_log,
             {
                 "ts": timestamp(),
                 "event": "batch_interrupt",
                 "inputs": len(inputs),
+                "done": done_jobs,
+                "failed": failed_jobs,
+                "pending": pending_count,
+                "exit_code": 130,
             },
         )
         return 130
@@ -131,7 +143,15 @@ def main() -> int:
             controls_thread.join(timeout=1.0)
         shutil.rmtree(run_tmp_root, ignore_errors=True)
 
-    print(f"[batch] finished | done {counters['done']}/{len(chapter_jobs)} | failed {counters['failed']}", flush=True)
+    done_jobs = counters["done"]
+    failed_jobs = counters["failed"]
+    pending_count = max(len(pending_jobs), len(chapter_jobs) - done_jobs - failed_jobs, 0)
+    exit_code = 1 if failed_jobs > 0 or pending_count > 0 else 0
+    print(
+        f"[batch] finished | done {done_jobs}/{len(chapter_jobs)} | "
+        f"failed {failed_jobs} | pending {pending_count}",
+        flush=True,
+    )
 
     append_runner_log(
         runner_log,
@@ -140,9 +160,13 @@ def main() -> int:
             "event": "batch_finish",
             "inputs": len(inputs),
             "chapter_jobs": len(chapter_jobs),
+            "done": done_jobs,
+            "failed": failed_jobs,
+            "pending": pending_count,
+            "exit_code": exit_code,
         },
     )
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -4,8 +4,16 @@ import argparse
 import json
 import os
 import py_compile
+import sys
 import tempfile
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from local_tts_renderer.model_bootstrap import MODEL_ARTIFACTS, validate_model_file
 
 
 def check_python() -> tuple[bool, str]:
@@ -18,9 +26,8 @@ def check_python() -> tuple[bool, str]:
 def check_paths(output_dir: Path, model_dir: Path) -> tuple[bool, list[str]]:
     messages: list[str] = []
     ok = True
-    output_dir.mkdir(parents=True, exist_ok=True)
-    model_dir.mkdir(parents=True, exist_ok=True)
     try:
+        output_dir.mkdir(parents=True, exist_ok=True)
         probe = output_dir / ".doctor-write-test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink(missing_ok=True)
@@ -28,32 +35,35 @@ def check_paths(output_dir: Path, model_dir: Path) -> tuple[bool, list[str]]:
     except Exception as exc:
         ok = False
         messages.append(f"output_not_writable={output_dir} error={exc!r}")
-    messages.append(f"model_dir={model_dir}")
+    try:
+        model_dir.mkdir(parents=True, exist_ok=True)
+        messages.append(f"model_dir={model_dir}")
+    except Exception as exc:
+        ok = False
+        messages.append(f"model_dir_unavailable={model_dir} error={exc!r}")
     return ok, messages
 
 
 def check_models(model_dir: Path) -> tuple[bool, list[str]]:
-    required = {
-        "model.onnx": model_dir / "kokoro-v1.0.onnx",
-        "voices.json": model_dir / "voices-v1.0.bin",
-    }
     ok = True
     messages: list[str] = []
-    for label, path in required.items():
-        if path.exists() and path.stat().st_size > 0:
-            messages.append(f"{label}=ok path={path}")
-        else:
+    for artifact in MODEL_ARTIFACTS:
+        path = model_dir / artifact.filename
+        try:
+            validate_model_file(path, artifact, verify_checksum=True)
+            messages.append(f"{artifact.filename}=ok path={path}")
+        except Exception as exc:
             ok = False
-            messages.append(f"{label}=missing path={path}")
+            messages.append(f"{artifact.filename}=invalid path={path} error={exc}")
     return ok, messages
 
 
 def check_onnx(provider_order: str | None) -> tuple[bool, list[str]]:
     try:
         import onnxruntime as ort
+        available = ort.get_available_providers()
     except Exception as exc:
-        return False, [f"onnxruntime_import=failed error={exc!r}"]
-    available = ort.get_available_providers()
+        return False, [f"onnxruntime_probe=failed error={exc!r}"]
     preferred = [p.strip() for p in (provider_order or "").split(",") if p.strip()]
     if not preferred:
         preferred = ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -68,8 +78,8 @@ def check_onnx(provider_order: str | None) -> tuple[bool, list[str]]:
 
 
 def check_temp_dir() -> tuple[bool, str]:
-    base = Path(tempfile.gettempdir())
     try:
+        base = Path(tempfile.gettempdir())
         probe = base / "local-tts-doctor-probe.tmp"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink(missing_ok=True)
@@ -97,12 +107,12 @@ def check_py_compile(root: Path) -> tuple[bool, list[str]]:
     return ok, messages
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Preflight checks for Local AI TTS Batch Renderer.")
     parser.add_argument("--output-dir", default="out")
     parser.add_argument("--model-dir", default="models")
     parser.add_argument("--providers", default=None, help="Comma-separated provider order.")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args(argv)
 
     checks: list[tuple[str, bool, list[str]]] = []
     py_ok, py_msg = check_python()

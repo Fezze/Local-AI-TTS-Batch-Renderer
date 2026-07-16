@@ -1,3 +1,5 @@
+import pytest
+
 from local_tts_renderer.scheduler import (
     ChapterJob,
     WorkerConfig,
@@ -10,6 +12,7 @@ from local_tts_renderer.scheduler import (
     select_next_job,
     update_worker_phase,
 )
+from local_tts_renderer.scheduler_jobs import resolve_job_max_chars
 
 
 def _job(index: int, title: str, chars: int, chunks: int) -> ChapterJob:
@@ -57,6 +60,25 @@ def test_max_chars_shrinks_on_retry_for_gpu() -> None:
     first = choose_worker_max_chars(WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider"), job_first, Args())
     retry = choose_worker_max_chars(WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider"), job_retry, Args())
     assert retry < first
+
+
+def test_resolved_job_max_chars_stays_stable_across_workers_and_retries() -> None:
+    class Args:
+        aggressive_gpu_recovery = False
+        cpu_worker_max_chars = 700
+        gpu_large_chapter_max_chars = 1000
+        gpu_small_chapter_max_chars = 900
+
+    job = _job(1, "Section Alpha", 12000, 12)
+    gpu = WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider")
+    cpu = WorkerConfig(name="cpu-1", provider="CPUExecutionProvider")
+
+    first = resolve_job_max_chars(gpu, job, Args())
+    job.attempt += 1
+    continued = resolve_job_max_chars(cpu, job, Args())
+
+    assert continued == first
+    assert job.render_max_chars == first
 
 
 def test_worker_command_includes_max_parts_per_run_flag() -> None:
@@ -122,6 +144,50 @@ def test_worker_command_omits_max_parts_per_run_when_disabled() -> None:
         cache_path=None,
     )
     assert "--max-parts-per-run" not in command
+
+
+@pytest.mark.parametrize(
+    ("mp3_only", "expected_flag", "unexpected_flag"),
+    [
+        (True, "--mp3-only", "--no-mp3-only"),
+        (False, "--no-mp3-only", "--mp3-only"),
+    ],
+)
+def test_worker_command_passes_explicit_mp3_mode(
+    mp3_only: bool,
+    expected_flag: str,
+    unexpected_flag: str,
+) -> None:
+    from argparse import Namespace
+    from pathlib import Path
+
+    args = Namespace(
+        output_dir="out",
+        voice="voice_a",
+        speed=1.0,
+        max_part_minutes=30.0,
+        model_dir="models",
+        silence_ms=250,
+        trim_mode="off",
+        heartbeat_seconds=30.0,
+        warmup_text="Warmup run.",
+        force=False,
+        keep_chunks=False,
+        mp3_only=mp3_only,
+        max_parts_per_run=0,
+    )
+    command = build_worker_command(
+        python_exe=Path("python"),
+        script_path=Path("md_to_audio.py"),
+        args=args,
+        source_path=Path("doc.epub"),
+        job=_job(4, "Section Alpha", 12000, 12),
+        worker_max_chars=900,
+        cache_path=None,
+    )
+
+    assert command.count(expected_flag) == 1
+    assert unexpected_flag not in command
 
 
 def test_update_worker_phase_detects_bootstrap_and_render() -> None:

@@ -6,15 +6,16 @@ import os
 import queue
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from .document_helpers import slugify
 
 from .scheduler_jobs import (
     build_worker_command,
-    choose_worker_max_chars,
     clear_directory_contents,
     re_slug,
+    resolve_job_max_chars,
     select_next_job,
 )
 from .scheduler_logging import (
@@ -60,6 +61,20 @@ def print_final_job_failure(worker: WorkerConfig, job: ChapterJob, job_log: Path
     if summary:
         print(f"[batch:error] worker={worker.name} chapter={job.chapter_index} detail={summary}", flush=True)
     print(f"[batch:error] worker={worker.name} chapter={job.chapter_index} log={job_log}", flush=True)
+
+
+def _resolve_retry_route(
+    job: ChapterJob,
+    worker: WorkerConfig,
+    statuses: dict[str, WorkerStatus],
+    *,
+    provider_failed: bool,
+) -> tuple[str | None, bool]:
+    if not provider_failed or worker.provider == "CPUExecutionProvider":
+        return job.preferred_provider, False
+    if any(name.startswith("cpu-") for name in statuses):
+        return "CPUExecutionProvider", True
+    return worker.provider, False
 
 
 def run_worker(
@@ -112,11 +127,8 @@ def run_worker(
         job_slug = re_slug(f"{source_path.stem}-{job.chapter_index:03d}-{job.chapter_title}")
         output_dir = Path(args.output_dir).resolve()
         source_output_dir = output_dir / slugify(source_path.stem)
-        worker_max_chars = choose_worker_max_chars(worker, job, args)
+        worker_max_chars = resolve_job_max_chars(worker, job, args)
         job_log = source_output_dir / f"{job_slug}.runner.log"
-        resume_path = output_dir / job.output_subdir / f"{job.output_name}.resume.json"
-        if args.fresh and resume_path.exists():
-            resume_path.unlink()
         cache_path = chapter_cache_map.get(source_path)
         command = build_worker_command(
             python_exe=python_exe,
@@ -412,19 +424,14 @@ def run_worker(
                         print_batch_summary(statuses, total_jobs, counters["done"], counters["failed"], counters["completed_chunks"], total_chunks, batch_started_at)
                         scheduler_condition.notify_all()
                         continue
-                    retry_provider = job.preferred_provider
-                    fallback_locked = False
-                    if (saw_cuda_error or timed_out) and worker.provider != "CPUExecutionProvider":
-                        retry_provider = "CPUExecutionProvider"
-                        fallback_locked = True
-                    retry_job = ChapterJob(
-                        source_path=job.source_path,
-                        chapter_index=job.chapter_index,
-                        chapter_title=job.chapter_title,
-                        output_subdir=job.output_subdir,
-                        output_name=job.output_name,
-                        estimated_chars=job.estimated_chars,
-                        estimated_chunks=job.estimated_chunks,
+                    retry_provider, fallback_locked = _resolve_retry_route(
+                        job,
+                        worker,
+                        statuses,
+                        provider_failed=saw_cuda_error or timed_out,
+                    )
+                    retry_job = replace(
+                        job,
                         attempt=job.attempt + 1,
                         preferred_provider=retry_provider,
                         fallback_locked=fallback_locked,

@@ -21,8 +21,6 @@ from .cli_models import (
     DEFAULT_SPEED,
     DEFAULT_TRIM_MODE,
     DEFAULT_VOICE,
-    MODEL_URL,
-    VOICES_URL,
 )
 from .defaults import (
     DEFAULT_MAX_PHONEME_CHARS,
@@ -31,6 +29,8 @@ from .defaults import (
     DEFAULT_OUTPUT_DIR,
     DEFAULT_WARMUP_TEXT,
 )
+from .model_bootstrap import ensure_file as _ensure_file
+from .model_bootstrap import ensure_model_files as _ensure_model_files
 from .providers import resolve_provider
 
 _ORT = None
@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
         help="Write only MP3 output files and skip WAV files on disk.",
     )
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files.")
+    parser.add_argument("--fresh", action="store_true", help="Discard unfinished resume state and partial artifacts before rendering.")
     parser.add_argument("--wav-to-mp3", help="Convert an existing WAV file to MP3 without rerunning TTS.")
     parser.add_argument("--mp3-bitrate", type=int, default=192, help="MP3 bitrate in kbps for WAV to MP3 conversion.")
     parser.add_argument("--list-chapters", action="store_true", help="Print extracted chapter info and exit without generating audio.")
@@ -184,23 +185,11 @@ def start_progress_heartbeat(progress_state: dict, interval_seconds: float) -> t
 
 
 def ensure_file(path: Path, url: str) -> None:
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=120) as response:
-        response.raise_for_status()
-        with path.open("wb") as handle:
-            for part in response.iter_content(chunk_size=1024 * 1024):
-                if part:
-                    handle.write(part)
+    _ensure_file(path, url)
 
 
 def ensure_model_files(model_dir: Path) -> tuple[Path, Path]:
-    model_path = model_dir / "kokoro-v1.0.onnx"
-    voices_path = model_dir / "voices-v1.0.bin"
-    ensure_file(model_path, MODEL_URL)
-    ensure_file(voices_path, VOICES_URL)
-    return model_path, voices_path
+    return _ensure_model_files(model_dir, file_ensurer=ensure_file)
 
 
 def get_onnxruntime():

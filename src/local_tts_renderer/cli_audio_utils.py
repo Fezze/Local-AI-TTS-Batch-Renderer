@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import re
 import time
@@ -104,17 +103,6 @@ def create_audio_with_retry(
         if sample_rate is None:
             raise RuntimeError("Retry split produced no audio.")
         return combined_parts, sample_rate
-
-
-def load_resume_state(checkpoint_path: Path) -> dict | None:
-    if not checkpoint_path.exists():
-        return None
-    return json.loads(checkpoint_path.read_text(encoding="utf-8"))
-
-
-def save_resume_state(checkpoint_path: Path, state: dict) -> None:
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    checkpoint_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def remove_output_files(part: dict) -> None:

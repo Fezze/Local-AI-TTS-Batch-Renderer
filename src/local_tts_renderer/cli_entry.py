@@ -145,6 +145,10 @@ def main() -> int:
     model_dir = Path(args.model_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     model_path, voices_path = ensure_model_files(model_dir)
+    model_identity = {
+        "model": {"name": model_path.name, "size": model_path.stat().st_size},
+        "voices": {"name": voices_path.name, "size": voices_path.stat().st_size},
+    }
     provider_priority = parse_provider_priority(args.providers)
     provider = configure_onnx_provider(provider_priority=provider_priority)
     ort = get_onnxruntime()
@@ -230,6 +234,8 @@ def main() -> int:
                     heartbeat_seconds=args.heartbeat_seconds,
                     final_stem_override=output_name,
                     max_parts_per_run=args.max_parts_per_run,
+                    fresh=getattr(args, "fresh", False),
+                    model_identity=model_identity,
                 )
             except PartialRunComplete:
                 return 75
@@ -258,6 +264,8 @@ def main() -> int:
                 audio_metadata=audio_metadata,
                 heartbeat_seconds=args.heartbeat_seconds,
                 max_parts_per_run=args.max_parts_per_run,
+                fresh=getattr(args, "fresh", False),
+                model_identity=model_identity,
             )
         except PartialRunComplete:
             return 75

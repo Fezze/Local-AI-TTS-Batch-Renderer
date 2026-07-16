@@ -43,6 +43,37 @@ class _DummyThread:
         return None
 
 
+def test_gpu_retry_route_uses_cpu_only_when_a_cpu_worker_exists() -> None:
+    job = ChapterJob(
+        source_path=Path("book.md"),
+        chapter_index=1,
+        chapter_title="Chapter",
+        output_subdir="book",
+        output_name="01-Chapter",
+        estimated_chars=100,
+        estimated_chunks=1,
+    )
+    worker = WorkerConfig(name="gpu-1", provider="CUDAExecutionProvider")
+
+    provider, locked = sr._resolve_retry_route(
+        job,
+        worker,
+        {"gpu-1": WorkerStatus(), "cpu-1": WorkerStatus()},
+        provider_failed=True,
+    )
+    assert provider == "CPUExecutionProvider"
+    assert locked is True
+
+    provider, locked = sr._resolve_retry_route(
+        job,
+        worker,
+        {"gpu-1": WorkerStatus()},
+        provider_failed=True,
+    )
+    assert provider == "CUDAExecutionProvider"
+    assert locked is False
+
+
 def test_run_worker_success_flow(monkeypatch) -> None:
     tmp = _mk_tmp_dir()
     try:
@@ -67,7 +98,7 @@ def test_run_worker_success_flow(monkeypatch) -> None:
         condition = threading.Condition()
         logs: list[dict] = []
 
-        monkeypatch.setattr(sr, "choose_worker_max_chars", lambda *a, **k: 900)
+        monkeypatch.setattr(sr, "resolve_job_max_chars", lambda *a, **k: 900)
         monkeypatch.setattr(sr, "build_worker_command", lambda **k: ["python", "-u", "dummy.py"])
         monkeypatch.setattr(sr, "append_runner_log", lambda _p, payload: logs.append(payload))
         monkeypatch.setattr(sr, "print_batch_summary", lambda *a, **k: None)
@@ -145,7 +176,7 @@ def test_run_worker_timeout_path(monkeypatch) -> None:
         condition = threading.Condition()
         logs: list[dict] = []
 
-        monkeypatch.setattr(sr, "choose_worker_max_chars", lambda *a, **k: 900)
+        monkeypatch.setattr(sr, "resolve_job_max_chars", lambda *a, **k: 900)
         monkeypatch.setattr(sr, "build_worker_command", lambda **k: ["python", "-u", "dummy.py"])
         monkeypatch.setattr(sr, "append_runner_log", lambda _p, payload: logs.append(payload))
         monkeypatch.setattr(sr, "print_batch_summary", lambda *a, **k: None)
@@ -220,7 +251,7 @@ def test_run_worker_prints_final_job_error(monkeypatch, capsys) -> None:
         condition = threading.Condition()
         logs: list[dict] = []
 
-        monkeypatch.setattr(sr, "choose_worker_max_chars", lambda *a, **k: 900)
+        monkeypatch.setattr(sr, "resolve_job_max_chars", lambda *a, **k: 900)
         monkeypatch.setattr(sr, "build_worker_command", lambda **k: ["python", "-u", "dummy.py"])
         monkeypatch.setattr(sr, "append_runner_log", lambda _p, payload: logs.append(payload))
         monkeypatch.setattr(sr, "print_batch_summary", lambda *a, **k: None)
@@ -269,4 +300,3 @@ def test_run_worker_prints_final_job_error(monkeypatch, capsys) -> None:
         assert any(entry.get("event") == "finish" for entry in logs)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-

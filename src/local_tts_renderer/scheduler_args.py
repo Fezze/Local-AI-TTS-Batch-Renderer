@@ -52,7 +52,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--silence-ms", type=int, default=DEFAULT_SILENCE_MS)
     parser.add_argument("--force", action="store_true", default=DEFAULT_FORCE)
     parser.add_argument("--keep-chunks", action="store_true", default=DEFAULT_KEEP_CHUNKS)
-    parser.add_argument("--fresh", action="store_true", default=DEFAULT_FRESH, help="Delete existing resume checkpoint for each input before starting.")
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        default=DEFAULT_FRESH,
+        help="Discard checkpoints and partial artifacts for unfinished jobs; completed jobs remain skipped unless --force is set.",
+    )
     parser.add_argument("--md-single-chapter", action="store_true", default=DEFAULT_MD_SINGLE_CHAPTER, help="Treat Markdown input as one chapter instead of splitting on headings.")
     parser.add_argument(
         "--md-chapter-heading-level",

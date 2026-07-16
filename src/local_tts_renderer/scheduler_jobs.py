@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 from .document_helpers import (
@@ -15,7 +16,8 @@ from .document_helpers import (
     sanitize_filename_component,
     slugify,
 )
-from .sources import MarkdownIngestOptions, SourceDocument, SourceLoadOptions, load_source
+from .cli_render_cleanup import load_complete_manifest, read_untrusted_resume_state, reset_render_artifacts
+from .sources import MarkdownIngestOptions, SourceChapter, SourceDocument, SourceLoadOptions, load_source
 
 from .defaults import (
     DEFAULT_CPU_MAX_CHARS,
@@ -60,43 +62,77 @@ def cpu_allowed_chunk_budget(statuses: dict[str, WorkerStatus], worker_name: str
     return max(1, 1 + int(idle_seconds // CPU_IDLE_STEP_SECONDS))
 
 
-def is_job_complete(output_dir: Path, job: ChapterJob) -> bool:
-    candidate_manifest_paths = [
-        (output_dir / job.output_subdir / job.output_name).with_suffix(".json"),
-        (output_dir / job.output_subdir).with_suffix(".json"),
+def is_job_complete(
+    output_dir: Path,
+    job: ChapterJob,
+    expected_chapter: SourceChapter,
+    expected_document_chapters: Sequence[SourceChapter],
+) -> bool:
+    primary_output_root = output_dir / job.output_subdir
+    source_output_root = output_dir / slugify(job.source_path.stem)
+    candidate_manifests: list[tuple[Path, Path, str | None, Sequence[SourceChapter]]] = [
+        (
+            (primary_output_root / job.output_name).with_suffix(".json"),
+            primary_output_root,
+            job.output_name,
+            [expected_chapter],
+        ),
+        (
+            source_output_root.with_suffix(".json"),
+            source_output_root,
+            None,
+            expected_document_chapters,
+        ),
     ]
-    manifest = None
-    for manifest_path in candidate_manifest_paths:
+    group_manifest_path = primary_output_root.with_suffix(".json")
+    if group_manifest_path not in {candidate[0] for candidate in candidate_manifests}:
+        group_chapters = [
+            chapter
+            for chapter in expected_document_chapters
+            if chapter.group == expected_chapter.group
+        ]
+        candidate_manifests.insert(
+            1,
+            (group_manifest_path, primary_output_root.with_suffix(""), None, group_chapters),
+        )
+
+    for manifest_path, output_root, final_stem_override, expected_chapters in candidate_manifests:
         if not manifest_path.exists():
             continue
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            break
-        except Exception:
+            complete = load_complete_manifest(
+                manifest_path=manifest_path,
+                base_output_dir=output_dir,
+                output_root=output_root,
+                final_stem_override=final_stem_override,
+                expected_chapters=[(chapter.title, chapter.text) for chapter in expected_chapters],
+            )
+        except OSError:
             continue
-    if manifest is None:
-        return False
+        if complete is not None:
+            return True
+    return False
 
-    parts = manifest.get("parts")
-    if not isinstance(parts, list) or not parts:
-        return False
 
-    for part in parts:
-        wav_path = part.get("wav_path")
-        mp3_path = part.get("mp3_path")
-        if not mp3_path:
-            return False
-        mp3_file = Path(mp3_path)
-        if not mp3_file.exists():
-            return False
-        if mp3_file.stat().st_size == 0:
-            return False
-        if wav_path:
-            wav_file = Path(wav_path)
-            if not wav_file.exists() or wav_file.stat().st_size == 0:
-                return False
+def reset_job_for_fresh_run(output_dir: Path, job: ChapterJob) -> tuple[Path, ...]:
+    output_root = output_dir / job.output_subdir
+    manifest_root = output_root / job.output_name
+    return reset_render_artifacts(
+        base_output_dir=output_dir,
+        output_root=output_root,
+        manifest_path=manifest_root.with_suffix(".json"),
+        checkpoint_path=manifest_root.with_suffix(".resume.json"),
+        chunk_dir=manifest_root.parent / f"{manifest_root.name}-chunks",
+        final_stem_override=job.output_name,
+        include_manifest=True,
+    )
 
-    return True
+
+def _load_pinned_render_max_chars(output_dir: Path, job: ChapterJob) -> int | None:
+    checkpoint_path = (output_dir / job.output_subdir / job.output_name).with_suffix(".resume.json")
+    state = read_untrusted_resume_state(checkpoint_path)
+    value = state.get("render_max_chars") if state else None
+    return value if type(value) is int and value > 0 else None
 
 
 def build_jobs(
@@ -105,6 +141,7 @@ def build_jobs(
     fresh: bool,
     debug: bool = False,
     *,
+    force: bool = False,
     md_single_chapter: bool = False,
     max_chapter_chars: int = 0,
     md_chapter_heading_level: int = 0,
@@ -196,9 +233,17 @@ def build_jobs(
                 estimated_chars=len(chapter.text),
                 estimated_chunks=estimated_chunks,
             )
-            if not fresh and is_job_complete(output_dir, job):
+            complete = is_job_complete(
+                output_dir,
+                job,
+                expected_chapter=chapter,
+                expected_document_chapters=chapters,
+            )
+            if not force and complete:
                 skipped.append(job)
             else:
+                if not fresh and not complete:
+                    job.render_max_chars = _load_pinned_render_max_chars(output_dir, job)
                 jobs.append(job)
         print(
             f"[batch:scan] source_done path={source_path} "
@@ -227,6 +272,14 @@ def choose_worker_max_chars(worker: WorkerConfig, job: ChapterJob, args: argpars
     else:
         base = args.gpu_small_chapter_max_chars
     return max(DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS, int(base * retry_shrink))
+
+
+def resolve_job_max_chars(worker: WorkerConfig, job: ChapterJob, args: argparse.Namespace) -> int:
+    """Keep chunk boundaries stable for partial continuation and retries."""
+
+    if job.render_max_chars is None:
+        job.render_max_chars = choose_worker_max_chars(worker, job, args)
+    return job.render_max_chars
 
 
 def build_worker_command(
@@ -285,8 +338,7 @@ def build_worker_command(
         command.append("--force")
     if args.keep_chunks:
         command.append("--keep-chunks")
-    if args.mp3_only:
-        command.append("--mp3-only")
+    command.append("--mp3-only" if args.mp3_only else "--no-mp3-only")
     if args.max_parts_per_run > 0:
         command.extend(["--max-parts-per-run", str(args.max_parts_per_run)])
     return command

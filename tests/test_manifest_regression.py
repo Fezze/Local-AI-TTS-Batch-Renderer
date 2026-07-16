@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from local_tts_renderer import cli_render_flow
 from local_tts_renderer.cli_models import AudioMetadata
@@ -58,5 +59,51 @@ def test_render_audio_manifest_preserves_chunk_order(monkeypatch) -> None:
         assert [chunk["chapter"] for chunk in manifest["chunks"]] == ["Alpha", "Beta"]
         assert [chunk["chapter"] for chunk in saved["chunks"]] == ["Alpha", "Beta"]
         assert [chunk["index"] for chunk in saved["chunks"]] == sorted(chunk["index"] for chunk in saved["chunks"])
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+@pytest.mark.parametrize("mp3_only", [True, False])
+def test_render_audio_manifest_matches_selected_disk_artifacts(monkeypatch, mp3_only: bool) -> None:
+    def fake_create_audio_with_retry(**kwargs):  # type: ignore[no-untyped-def]
+        return [np.zeros(2400, dtype=np.float32)], 24000
+
+    monkeypatch.setattr(cli_render_flow, "CREATE_AUDIO_WITH_RETRY", fake_create_audio_with_retry)
+
+    chapters = [Chapter(title="Alpha", text="One neutral sentence.", group=None)]
+    tmp_path = _mk_tmp_dir()
+    try:
+        output_root = tmp_path / "doc"
+        manifest = cli_render_flow.render_audio(
+            kokoro=object(),
+            chapters=chapters,
+            base_output_dir=tmp_path,
+            output_root=output_root,
+            group_dir_map={},
+            voice="voice_a",
+            lang="en-us",
+            trim_mode="off",
+            speed=1.0,
+            max_chars=80,
+            silence_ms=0,
+            max_part_minutes=10.0,
+            keep_chunks=False,
+            mp3_only=mp3_only,
+            force=True,
+            audio_metadata=AudioMetadata(source_title="Test Source"),
+            heartbeat_seconds=0.0,
+            final_stem_override="01-Test Source",
+        )
+
+        saved = json.loads((output_root / "01-Test Source.json").read_text(encoding="utf-8"))
+        part = manifest["parts"][0]
+        assert saved["parts"] == manifest["parts"]
+        assert Path(part["mp3_path"]).stat().st_size > 0
+        if mp3_only:
+            assert part["wav_path"] is None
+            assert not (tmp_path / "wav" / "doc" / "01-Test Source.wav").exists()
+        else:
+            assert part["wav_path"] is not None
+            assert Path(part["wav_path"]).stat().st_size > 0
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)

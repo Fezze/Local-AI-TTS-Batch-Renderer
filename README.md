@@ -1,139 +1,171 @@
-﻿# Local AI TTS Batch Renderer
+# Local AI TTS Batch Renderer
 
-Local renderer for Markdown/EPUB to speech using ONNX Runtime.
+Local Markdown and EPUB to speech renderer based on Kokoro ONNX. It supports a
+single-process CLI and a multi-worker batch scheduler on Windows and Linux.
 
-## Features
+## Current status
 
-- Single run: `md_to_audio.py`
-- Batch scheduler: `run_tts_batch.py`
-- Provider priority with fallback (`CUDA/CPU` now, ready for more)
-- Windows + Linux startup scripts
-- Tests and CI for CPU paths
+- Inputs: `.md`, `.markdown`, and `.epub`.
+- Output: MP3 by default, optional WAV and per-chunk files, plus JSON manifests.
+- Runtime: CUDA when available, with CPU fallback.
+- Python: `>=3.11`; CI currently covers 3.11 and 3.12.
+- Tests: unit, scheduler-flow, architecture, manifest, and chunking regressions.
 
-## Quick Start
+DirectML and ROCm names are recognized by provider routing, but their dependency
+profiles and installation instructions are not complete. Treat them as planned,
+not supported setup paths. See [BACKLOG.md](BACKLOG.md).
 
-Preflight check:
+## Quick start
 
-```powershell
-.\.venv\Scripts\python.exe .\scripts\doctor.py --output-dir ".\out" --model-dir ".\models"
-```
-
-### Windows
-
-```powershell
-scripts\setup.ps1 -Dev
-scripts\start.ps1 --input ".\book.epub" --output-dir ".\out"
-```
-
-Batch:
-
-```powershell
-.\.venv\Scripts\python.exe .\run_tts_batch.py --input ".\books" --output-dir ".\out"
-```
-
-Skip preflight in start script:
-
-```powershell
-scripts\start.ps1 -SkipDoctor --input ".\book.epub" --output-dir ".\out"
-```
+Run commands from the repository root.
 
 ### Linux
 
 ```bash
 bash scripts/setup.sh --dev
+```
+
+```bash
 bash scripts/start.sh --input ./book.epub --output-dir ./out
+bash scripts/start-batch.sh --input ./books --output-dir ./out
 ```
 
-Batch:
-
-```bash
-./.venv/bin/python ./run_tts_batch.py --input ./books --output-dir ./out
-```
-
-Skip preflight in start script:
-
-```bash
-SKIP_DOCTOR=1 bash scripts/start.sh --input ./book.epub --output-dir ./out
-```
-
-## Provider Configuration
-
-Single run:
+### Windows PowerShell
 
 ```powershell
-python md_to_audio.py --input "book.epub" --providers "CUDAExecutionProvider,CPUExecutionProvider"
+.\scripts\setup.ps1 -Dev
 ```
-
-Batch run:
 
 ```powershell
-python run_tts_batch.py --input "books" --gpu-workers 2 --cpu-workers 1 --providers "CUDAExecutionProvider,DmlExecutionProvider,CPUExecutionProvider"
+.\scripts\start.ps1 --input ".\book.epub" --output-dir ".\out"
+.\scripts\start-batch.ps1 --input ".\books" --output-dir ".\out"
 ```
 
-- `--providers` defines priority order.
-- Scheduler automatically builds workers from available providers.
-- If GPU provider is not available, CPU workers are used.
+Start wrappers download and validate the Kokoro model and voice data before the
+doctor runs. Downloads use a lock and atomic replacement, so parallel workers do
+not publish partial model files. The default destination is `models/`; pass
+`--model-dir` to select another location.
 
-## Project Structure
+## Preflight
 
-- `src/local_tts_renderer/cli.py` - thin CLI entrypoint
-- `src/local_tts_renderer/cli_core.py` - minimal compatibility shim for `main` and `parse_args`
-- `src/local_tts_renderer/cli_entry.py` - single-run orchestration
-- `src/local_tts_renderer/cli_render_flow.py` - TTS render flow
-- `src/local_tts_renderer/scheduler.py` - batch scheduler
-- `src/local_tts_renderer/sources/` - source ingesters, source registry, and normalized document model
-- `src/local_tts_renderer/document_helpers.py` - source-agnostic naming and grouping helpers
-- `src/local_tts_renderer/providers.py` - provider resolution and worker allocation
-- `src/local_tts_renderer/chunking.py` - chunking interface
-- `src/local_tts_renderer/input_parsers.py` - legacy compatibility facade; new internal code should use `sources/`
-- `scripts/` - setup/start scripts
-- `tests/` - regression and unit tests
+Run the doctor explicitly when diagnosing the environment:
 
-## Source Ingestion
+```bash
+./.venv/bin/python scripts/doctor.py --output-dir ./out --model-dir ./models
+```
 
-Source format support is registry-driven. Each ingester normalizes input into `SourceDocument`,
-`SourceMetadata`, `SourceChapter`, and optional `SourceNavigationNode` objects before rendering
-or batch planning. Adding a future format should mostly mean adding one ingester module,
-registering it, and testing its normalized document output.
+```powershell
+.\.venv\Scripts\python.exe .\scripts\doctor.py --output-dir ".\out" --model-dir ".\models"
+```
 
-`input_parsers.py` is kept only as a backward-compatible facade for old callers. New internal
-code should not import from it or add parsing logic there. Compatibility shims such as
-`cli_core.py`, `render.py`, and `chunking.py` should stay small and explicit instead of becoming
-new ownership hubs.
+The doctor checks Python, paths, model files, ONNX providers, the temporary
+directory, and Python syntax. Start wrappers forward the original arguments;
+bootstrap consumes `--model-dir`, while preflight recognizes `--output-dir`,
+`--model-dir`, and `--providers`.
 
-Chapter cache files intentionally store chapter payloads only. Metadata and navigation are still
-loaded through the source registry so grouped output, numbering, and tags continue to come from
-the normalized source document.
+## Common usage
 
-## Public Compatibility Surface
+Inspect chapters without rendering:
 
-The intended stable entrypoints are:
+```bash
+./.venv/bin/python md_to_audio.py --input ./book.epub --list-chapters
+```
 
-- `local_tts_renderer.tts_main`
-- `local_tts_renderer.batch_main`
-- `local_tts_renderer.cli.main`
-- `local_tts_renderer.scheduler.main`
-- `local_tts_renderer.sources.load_source`
-- `local_tts_renderer.sources.supported_suffixes`
+All start wrappers show `--help` without provisioning models. The single-run
+wrappers also skip model bootstrap and model-dependent preflight for
+`--list-chapters` and `--wav-to-mp3` operations.
 
-The modules `input_parsers.py`, `cli_core.py`, `render.py`, `chunking.py`, and `scheduler.py`
-also expose small compatibility surfaces for existing callers. Keep those surfaces thin and
-intentional; new implementation ownership should live in the underlying modules.
+Render selected inputs in one process:
 
-## Troubleshooting
+```bash
+./.venv/bin/python md_to_audio.py \
+  --input ./chapter-1.md ./chapter-2.md \
+  --output-dir ./out \
+  --providers "CUDAExecutionProvider,CPUExecutionProvider"
+```
 
-- No GPU provider detected: verify ONNX Runtime GPU package and driver stack.
-- Worker timeout in batch: increase `--worker-silence-timeout-seconds`.
-- Existing outputs skipped: use `--fresh` in batch or `--force` in single run.
-- After interrupted/frozen run on Windows: `powershell -ExecutionPolicy Bypass -File .\scripts\recover-after-abort.ps1 -ClearResume`
+Run the batch scheduler:
 
-## Notes
+```bash
+./.venv/bin/python run_tts_batch.py \
+  --input ./books \
+  --output-dir ./out \
+  --gpu-workers 2 \
+  --cpu-workers 1
+```
 
-- Current default model pipeline is Kokoro ONNX.
-- Planned support for additional models and formats is tracked in `BACKLOG.md`.
+Recovery and overwrite behavior for batch jobs:
 
-## Tests and Coverage
+| Flags | Unfinished job | Completed job |
+| --- | --- | --- |
+| none | Resume its validated checkpoint. | Skip. |
+| `--fresh` | Remove its partial artifacts and restart. | Skip. |
+| `--force` | Resume its validated checkpoint. | Remove owned output and rerender. |
+| `--fresh --force` | Remove owned output and restart. | Remove owned output and rerender. |
+
+The single-process CLI uses the same unfinished-job recovery rules. It remains
+fail-fast on completed output unless `--force` is supplied.
+
+Other useful flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--mp3-only` / `--no-mp3-only` | Select MP3-only or MP3+WAV in single and batch runs. |
+| `--md-single-chapter` | Treat a Markdown file as one chapter. |
+| `--md-chapter-heading-level 0-4` | Control Markdown heading-based chapter splitting; `0` selects automatically. |
+| `--max-chapter-chars N` | Split oversized Markdown chapters; `0` disables this extra split. |
+
+## Provider status
+
+| Provider | Repository status |
+| --- | --- |
+| `CUDAExecutionProvider` | Current default GPU path. The existing dependency set is CUDA-oriented. |
+| `CPUExecutionProvider` | Current fallback and test path, but installation is still coupled to GPU dependencies. |
+| `DmlExecutionProvider` | Routing scaffold only; no supported DirectML install profile yet. |
+| `ROCMExecutionProvider` | Routing scaffold only; no supported ROCm install profile yet. |
+
+Provider priority is selected with `--providers`. If no requested GPU provider is
+available, the scheduler creates CPU workers.
+
+## Output and recovery
+
+Each source writes audio, JSON manifests, and atomic resume checkpoints under its
+output subtree. Batch runs additionally write `runner.jsonl`, per-job logs, and a
+chapter cache. Completed batch jobs are normally skipped.
+
+After an interrupted Windows run, first preserve the checkpoint:
+
+```powershell
+.\scripts\recover-after-abort.ps1
+```
+
+Use `-ClearResume` only when intentionally discarding resume state:
+
+```powershell
+.\scripts\recover-after-abort.ps1 -ClearResume
+```
+
+## Architecture
+
+Source ingestion is registry-driven. Markdown and EPUB ingesters normalize data
+into `SourceDocument` before single-run or batch orchestration. Compatibility
+modules remain intentionally thin.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module ownership, stable
+entrypoints, and architectural invariants.
+
+## Development
+
+```bash
+./.venv/bin/python -m pytest --cov=src/local_tts_renderer --cov-report=term-missing -q
+```
+
+Windows:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest --cov=src/local_tts_renderer --cov-report=term-missing -q
 ```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for regression expectations and
+environment repair. Active work lives only in [BACKLOG.md](BACKLOG.md). The latest
+review snapshot is [docs/reviews/2026-07-project-audit.md](docs/reviews/2026-07-project-audit.md).

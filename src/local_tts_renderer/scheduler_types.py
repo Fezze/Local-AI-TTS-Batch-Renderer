@@ -38,6 +38,7 @@ class ChapterJob:
     attempt: int = 1
     preferred_provider: str | None = None
     fallback_locked: bool = False
+    render_max_chars: int | None = None
 
 
 @dataclass

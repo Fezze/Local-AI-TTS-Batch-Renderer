@@ -106,7 +106,8 @@ def test_scheduler_main_happy_path(monkeypatch) -> None:
         monkeypatch.setattr(core, "probe_available_providers", lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"])
         monkeypatch.setattr(core, "build_worker_provider_list", lambda **_k: ["CUDAExecutionProvider", "CPUExecutionProvider"])
         monkeypatch.setattr(core, "prepare_worker_temp_dirs", lambda workers: (tmp / "tmp-root", {w.name: tmp / "tmp-root" / w.name for w in workers}))
-        monkeypatch.setattr(core, "append_runner_log", lambda *_a, **_k: None)
+        logs: list[dict] = []
+        monkeypatch.setattr(core, "append_runner_log", lambda _path, payload: logs.append(payload))
         monkeypatch.setattr(core, "start_console_controls", lambda **_k: (__import__("threading").Event(), None))
 
         def fake_run_worker(worker, pending_jobs, _args, _runner_log, *_rest):
@@ -117,5 +118,114 @@ def test_scheduler_main_happy_path(monkeypatch) -> None:
         monkeypatch.setattr(core, "run_worker", fake_run_worker)
         monkeypatch.setattr(core.shutil, "rmtree", lambda *_a, **_k: None)
         assert core.main() == 0
+        assert logs[-1] == {
+            "ts": logs[-1]["ts"],
+            "event": "batch_finish",
+            "inputs": 1,
+            "chapter_jobs": 1,
+            "done": 1,
+            "failed": 0,
+            "pending": 0,
+            "exit_code": 0,
+        }
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_scheduler_main_returns_nonzero_for_failed_or_pending_jobs(monkeypatch) -> None:
+    for outcome in ("failed", "pending"):
+        tmp = _mk_tmp_dir()
+        try:
+            out = tmp / "out"
+            out.mkdir(parents=True, exist_ok=True)
+            source = tmp / "neutral.md"
+            source.write_text("# Title\nBody", encoding="utf-8")
+            args = _base_args(out)
+            job = ChapterJob(
+                source_path=source,
+                chapter_index=1,
+                chapter_title="Neutral Chapter",
+                output_subdir="neutral",
+                output_name="01-Neutral Chapter",
+                estimated_chars=100,
+                estimated_chunks=1,
+            )
+            logs: list[dict] = []
+
+            monkeypatch.setattr(core, "parse_args", lambda: args)
+            monkeypatch.setattr(core, "expand_inputs", lambda _items: [source])
+            monkeypatch.setattr(core, "build_jobs", lambda *_a, **_k: ([job], [], {source: tmp / "cache.json"}))
+            monkeypatch.setattr(core, "append_runner_log", lambda _path, payload: logs.append(payload))
+            monkeypatch.setattr(core, "start_console_controls", lambda **_k: (__import__("threading").Event(), None))
+
+            def fake_run_worker(worker, pending_jobs, _args, _runner_log, *_rest):
+                if outcome == "failed":
+                    try:
+                        pending_jobs.pop(0)
+                    except IndexError:
+                        return
+                    _rest[5]["failed"] += 1
+
+            monkeypatch.setattr(core, "run_worker", fake_run_worker)
+            monkeypatch.setattr(core.shutil, "rmtree", lambda *_a, **_k: None)
+
+            assert core.main() == 1
+            finish = logs[-1]
+            assert finish["event"] == "batch_finish"
+            assert finish["exit_code"] == 1
+            assert finish["failed"] == (1 if outcome == "failed" else 0)
+            assert finish["pending"] == (0 if outcome == "failed" else 1)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_scheduler_main_interrupt_reports_pending_and_returns_130(monkeypatch) -> None:
+    tmp = _mk_tmp_dir()
+    try:
+        out = tmp / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        source = tmp / "neutral.md"
+        source.write_text("# Title\nBody", encoding="utf-8")
+        args = _base_args(out)
+        job = ChapterJob(
+            source_path=source,
+            chapter_index=1,
+            chapter_title="Neutral Chapter",
+            output_subdir="neutral",
+            output_name="01-Neutral Chapter",
+            estimated_chars=100,
+            estimated_chunks=1,
+        )
+        logs: list[dict] = []
+        terminated: list[bool] = []
+
+        monkeypatch.setattr(core, "parse_args", lambda: args)
+        monkeypatch.setattr(core, "expand_inputs", lambda _items: [source])
+        monkeypatch.setattr(core, "build_jobs", lambda *_a, **_k: ([job], [], {source: tmp / "cache.json"}))
+        monkeypatch.setattr(core, "append_runner_log", lambda _path, payload: logs.append(payload))
+        monkeypatch.setattr(core, "start_console_controls", lambda **_k: (__import__("threading").Event(), None))
+        monkeypatch.setattr(core, "terminate_all_active_processes", lambda force: terminated.append(force))
+        monkeypatch.setattr(core.shutil, "rmtree", lambda *_a, **_k: None)
+
+        class InterruptThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self) -> None:
+                return None
+
+            def join(self) -> None:
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(core.threading, "Thread", InterruptThread)
+
+        assert core.main() == 130
+        assert terminated == [True]
+        interrupted = logs[-1]
+        assert interrupted["event"] == "batch_interrupt"
+        assert interrupted["done"] == 0
+        assert interrupted["failed"] == 0
+        assert interrupted["pending"] == 1
+        assert interrupted["exit_code"] == 130
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
