@@ -86,3 +86,27 @@ def test_source_registry_loads_epub_document() -> None:
         assert [node.title for node in document.navigation] == ["Chapter One"]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_source_registry_loads_epub_spine_item_with_nonstandard_filename() -> None:
+    tmp = _mk_tmp_dir()
+    try:
+        source = tmp / "split-filename.epub"
+        with zipfile.ZipFile(source, "w") as zf:
+            zf.writestr(
+                "META-INF/container.xml",
+                """<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>""",
+            )
+            zf.writestr(
+                "content.opf",
+                """<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="c1" href=".html_split_000" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>""",
+            )
+            zf.writestr(
+                ".html_split_000",
+                """<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>One</h1><p>Hello.</p></body></html>""",
+            )
+        document = load_source(source)
+        assert [chapter.title for chapter in document.chapters] == ["One"]
+        assert document.chapters[0].text == "One\nHello."
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

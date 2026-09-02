@@ -102,15 +102,22 @@ def extract_epub_chapters_dynamic(path: Path) -> list[SourceChapter]:
         package_path = rootfile.attrib["full-path"]
         package_xml = ET.fromstring(archive.read(package_path))
         manifest = {
-            item.attrib["id"]: normalize_epub_path(package_path, item.attrib["href"])
+            item.attrib["id"]: (
+                normalize_epub_path(package_path, item.attrib["href"]),
+                item.attrib.get("media-type", "").lower(),
+            )
             for item in package_xml.findall(".//{*}manifest/{*}item")
             if "id" in item.attrib and "href" in item.attrib
         }
         spine_ids = [item.attrib["idref"] for item in package_xml.findall(".//{*}spine/{*}itemref") if "idref" in item.attrib]
         toc_lookup = build_toc_lookup(load_epub_toc(archive, package_path, package_xml))
         for spine_id in spine_ids:
-            item_path = manifest.get(spine_id)
-            if not item_path or not item_path.lower().endswith((".xhtml", ".html", ".htm", ".xml")):
+            manifest_item = manifest.get(spine_id)
+            if not manifest_item:
+                continue
+            item_path, media_type = manifest_item
+            is_document = media_type in {"application/xhtml+xml", "text/html", "application/xml"}
+            if not is_document and not item_path.lower().endswith((".xhtml", ".html", ".htm", ".xml")):
                 continue
             try:
                 doc = ET.fromstring(archive.read(item_path))
