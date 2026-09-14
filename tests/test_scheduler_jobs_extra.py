@@ -186,7 +186,7 @@ def test_build_jobs_md_and_epub_paths(monkeypatch) -> None:
         out = tmp / "out"
         src_md = tmp / "neutral.md"
         src_md.write_text("# Head\nText", encoding="utf-8")
-        src_epub = tmp / "neutral.epub"
+        src_epub = tmp / "other.epub"
         src_epub.write_text("dummy", encoding="utf-8")
 
         chapters_md = [Chapter(title="Intro", text="text", group=None)]

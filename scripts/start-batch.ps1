@@ -1,8 +1,9 @@
-﻿param(
+param(
   [switch]$SkipDoctor
 )
 
 $ErrorActionPreference = "Stop"
+Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 $ForwardArgs = @($args)
 $ModelFreeCommand = ($ForwardArgs -contains "-h") -or ($ForwardArgs -contains "--help")
 if (-not $ModelFreeCommand) {

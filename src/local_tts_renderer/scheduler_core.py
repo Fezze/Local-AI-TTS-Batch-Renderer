@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from .scheduler_args import expand_inputs, parse_args
+from .input_paths import validate_source_outputs
 from .providers import build_worker_provider_list, parse_provider_priority, probe_available_providers
 from .scheduler_jobs import (
     build_jobs,
@@ -32,6 +33,11 @@ def main() -> int:
     if not inputs:
         print("No input files found.")
         return 2
+    try:
+        validate_source_outputs(inputs)
+    except ValueError as exc:
+        print(str(exc))
+        return 2
     output_dir = Path(args.output_dir).resolve()
     print(
         "[batch:config] "
@@ -45,18 +51,23 @@ def main() -> int:
         f"console_controls={'off' if args.no_console_controls else 'on'}",
         flush=True,
     )
-    chapter_jobs, skipped_jobs, chapter_cache_map = build_jobs(
-        inputs,
-        output_dir,
-        args.fresh,
-        force=args.force,
-        debug=args.debug,
-        md_single_chapter=getattr(args, "md_single_chapter", False),
-        max_chapter_chars=getattr(args, "max_chapter_chars", 0),
-        md_chapter_heading_level=getattr(args, "md_chapter_heading_level", 0),
-        max_chars=args.max_chars,
-        max_phoneme_chars=getattr(args, "max_phoneme_chars", 0),
-    )
+    try:
+        chapter_jobs, skipped_jobs, chapter_cache_map = build_jobs(
+            inputs,
+            output_dir,
+            args.fresh,
+            force=args.force,
+            debug=args.debug,
+            md_single_chapter=getattr(args, "md_single_chapter", False),
+            max_chapter_chars=getattr(args, "max_chapter_chars", 0),
+            md_chapter_heading_level=getattr(args, "md_chapter_heading_level", 0),
+            job_max_chars=getattr(args, "job_max_chars", 12000),
+            max_chars=args.max_chars,
+            max_phoneme_chars=getattr(args, "max_phoneme_chars", 0),
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return 2
     if not chapter_jobs:
         if skipped_jobs:
             print(f"Nothing to do. Skipped {len(skipped_jobs)} completed chapter jobs.")

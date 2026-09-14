@@ -62,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mp3-bitrate", type=int, default=192, help="MP3 bitrate in kbps for WAV to MP3 conversion.")
     parser.add_argument("--list-chapters", action="store_true", help="Print extracted chapter info and exit without generating audio.")
     parser.add_argument("--chapter-index", type=int, help="Render only one extracted chapter by 1-based index.")
+    parser.add_argument("--chapter-text-start", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--chapter-text-end", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--chapter-cache", help="Optional JSON cache with pre-extracted chapters for faster chapter jobs.")
     parser.add_argument("--output-subdir", help="Optional output subdirectory under --output-dir for chapter batch jobs.")
     parser.add_argument("--output-name", help="Optional base output name for chapter batch jobs.")

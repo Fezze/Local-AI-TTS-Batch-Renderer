@@ -109,7 +109,7 @@ def check_py_compile(root: Path) -> tuple[bool, list[str]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Preflight checks for Local AI TTS Batch Renderer.")
-    parser.add_argument("--output-dir", default="out")
+    parser.add_argument("--output-dir", "--out", default="out")
     parser.add_argument("--model-dir", default="models")
     parser.add_argument("--providers", default=None, help="Comma-separated provider order.")
     args, _ = parser.parse_known_args(argv)

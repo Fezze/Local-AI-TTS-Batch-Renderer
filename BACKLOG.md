@@ -1,6 +1,6 @@
 # Backlog
 
-Last reviewed: 2026-07-16.
+Last reviewed: 2026-09-14.
 
 This is the single source of truth for active work. Priorities mean:
 
@@ -24,44 +24,24 @@ complete.
 - [ ] Add native Linux and Windows CI smoke tests for setup -> preflight -> first render with mocked downloads. The current Windows regression is a static PowerShell check.
 - [x] Remove the obsolete first-run bypass from `README.md`.
 
-### B-005: Use one platform-neutral runtime configuration
-
-- [ ] Change the default output from `".\\out"` to `"out"` and add Windows/Linux parser tests.
-- [ ] Make start wrappers run from the repository root regardless of the caller's current directory.
-- [ ] Forward resolved output, model, and provider arguments to the doctor.
-- [ ] Remove duplicated timeout defaults from `defaults.py`.
-
 ## P1 — reliability, installation, and automation
 
 ### B-101: Introduce explicit install profiles
 
 - [ ] Provide mutually exclusive CPU and CUDA dependency profiles; add DirectML/ROCm only when tested.
-- [ ] Make `pyproject.toml` the install source of truth and create working console entrypoints.
-- [ ] Decide whether this is an installable package or script-only application; remove the unused alternative.
 - [ ] Add a lock/constraints update process and verify exactly one ONNX Runtime distribution per environment.
-
-### B-102: Make output identity collision-safe
-
-- [ ] Detect two inputs that map to the same source slug before starting workers.
-- [ ] Choose a stable disambiguation scheme based on relative path or source identity.
-- [ ] Cover same-name files from different directories and different names with the same normalized slug.
-
-### B-103: Separate liveness from progress
-
-- [ ] Track process output, heartbeat, and actual chunk progress independently.
-- [ ] Time out a renderer that emits heartbeats without advancing for a configured interval.
-- [ ] Add a deadlocked-render regression.
 
 ### B-104: Harden setup scripts and CI
 
-- [ ] Make PowerShell scripts propagate every native process exit code.
-- [ ] Detect and recreate broken Windows virtual environments as Linux setup already does.
-- [ ] Test wheel/editable installation and both console `--help` commands in CI.
+- [ ] Audit remaining recovery and Defender utility scripts for native process exit codes; setup/start scripts are covered.
 - [ ] Use a lightweight CPU profile for unit tests; keep real provider inference in a separate smoke job.
 - [ ] Raise the coverage gate from 50% toward the current 85% baseline after filling critical resume branches.
-- [ ] Add an automated production-file limit check for the 500-line rule.
 
 ### B-105: Complete EPUB ingestion coverage
+
+- [ ] Implement and validate semantic EPUB chapter boundaries and independent, resumable worker text ranges (active).
+
+- [ ] Distinguish logical chapters from EPUB spine-file boundaries, and plan bounded worker jobs independently of those boundaries; cover a whole book stored in one HTML file.
 
 - [ ] Preserve separate TOC anchors that point into the same XHTML file.
 - [ ] Support EPUB3 navigation documents in addition to NCX.

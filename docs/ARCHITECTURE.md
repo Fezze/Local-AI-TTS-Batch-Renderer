@@ -25,6 +25,7 @@ CLI and scheduler code must not branch on individual file extensions.
 | --- | --- |
 | Source normalization | `sources/registry.py`, `sources/markdown.py`, `sources/epub.py`, `sources/model.py` |
 | Source-agnostic naming and grouping | `document_helpers.py` |
+| Input glob expansion, collision checks and cache identity | `input_paths.py` |
 | Atomic local file publication | `atomic_io.py` |
 | Model provisioning and validation | `model_bootstrap.py` |
 | Single-run argument/runtime bootstrap | `cli_runtime.py` |
@@ -33,6 +34,7 @@ CLI and scheduler code must not branch on individual file extensions.
 | Resume state and scoped cleanup | `cli_resume.py`, `cli_render_cleanup.py` |
 | Batch arguments and planning | `scheduler_args.py`, `scheduler_jobs.py`, `scheduler_setup.py` |
 | Batch worker lifecycle | `scheduler_runtime.py`, `scheduler_process.py`, `scheduler_logging.py` |
+| Worker progress deadline and failure presentation | `scheduler_progress.py`, `scheduler_failures.py` |
 | Composition root | `scheduler_core.py` |
 
 `input_parsers.py`, `cli_core.py`, `render.py`, `chunking.py`, `cli.py`, and
@@ -84,6 +86,20 @@ should import from the owning module rather than a compatibility facade.
 - Batch completion is unsuccessful whenever jobs fail or remain pending, and
   final logs retain all three job counts.
 - Batch workers receive an explicit MP3-only or MP3+WAV flag.
+- Reject colliding source output slugs within an invocation before cache/output
+  mutation; preserve legacy output names instead of automatically renaming them.
+  Chapter cache filenames include a SHA-256 hash of the resolved source path.
+- Installed and checkout batch workers execute the CLI module. The scheduler
+  passes its package root through PYTHONPATH; the legacy script_path argument
+  remains accepted by worker-command helpers for compatibility.
+- Packaging reads dependencies from requirements.txt and retains the existing GPU
+  profile. Setup/start wrappers use repository-relative paths; direct CLI commands
+  use caller-relative paths. Both default to `out`.
+- An optional monotonic progress deadline starts at the render-start event. Only
+  increasing completed-chunk counts reset it. It is disabled by default and uses
+  existing worker termination/retry behavior when enabled.
+- NCX links resolve relative to the NCX document. TOC recursion shares its lookup
+  even when a parent has no link; spine order remains the reading order.
 - Future formats and TTS models must first define a tested contract; they should
   not expand existing orchestration modules with new branches.
 

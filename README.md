@@ -17,7 +17,11 @@ not supported setup paths. See [BACKLOG.md](BACKLOG.md).
 
 ## Quick start
 
-Run commands from the repository root.
+The examples below start in the repository root. Setup and start wrappers also
+work when invoked by absolute path from another directory. They run from the
+repository root, so relative input, output and model arguments passed to wrappers
+are resolved there. Direct Python and installed console commands resolve relative
+paths from the caller's current directory. The default output directory is `out`.
 
 ### Linux
 
@@ -46,6 +50,22 @@ doctor runs. Downloads use a lock and atomic replacement, so parallel workers do
 not publish partial model files. The default destination is `models/`; pass
 `--model-dir` to select another location.
 
+### Installed commands
+
+After setup, install the package in the same environment:
+
+```bash
+./.venv/bin/python -m pip install .
+local-tts-render --help
+local-tts-batch --help
+```
+
+Use the environment's Python and console paths on Windows. Activate the environment
+or use the full path to its console scripts. Editable installation (`pip install -e .`)
+is also supported. Package dependencies come from `requirements.txt`; the existing
+GPU dependency profile is unchanged. Batch workers invoke `python -m local_tts_renderer.cli`
+and do not require repository entrypoint scripts.
+
 ## Preflight
 
 Run the doctor explicitly when diagnosing the environment:
@@ -60,8 +80,25 @@ Run the doctor explicitly when diagnosing the environment:
 
 The doctor checks Python, paths, model files, ONNX providers, the temporary
 directory, and Python syntax. Start wrappers forward the original arguments;
-bootstrap consumes `--model-dir`, while preflight recognizes `--output-dir`,
+bootstrap consumes `--model-dir`, while preflight recognizes `--output-dir` / `--out`,
 `--model-dir`, and `--providers`.
+
+## Input identity and worker timeouts
+
+Both CLIs accept quoted absolute and relative glob patterns. Matches are sorted
+and duplicate paths are processed once. Sources in one invocation must map to
+distinct output directories: for example, `a/book.md` and `b/book.md`, or
+`a-b.md` and `a_b.md`, collide. Rendering exits with code 2 and lists those inputs
+before writing caches or deleting outputs. Rename sources or run them separately
+with distinct output directories. Existing result names are unchanged; caches use
+an additional source-path hash and can be regenerated automatically.
+
+Batch `--worker-progress-timeout-seconds N` optionally retries a renderer that
+finishes no further chunks for N seconds after rendering starts. Its default is
+`0` (disabled). Repeated heartbeats with the same completed count do not reset it;
+an increasing completed count does. The limit also applies while publishing audio
+parts, so allow enough time for slow encoding. Existing silence and bootstrap
+limits remain separate. Timeout logs distinguish `no_progress` from `silence`.
 
 ## Common usage
 

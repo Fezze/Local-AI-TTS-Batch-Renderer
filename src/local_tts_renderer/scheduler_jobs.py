@@ -25,6 +25,9 @@ from .defaults import (
     DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS,
 )
 from .scheduler_logging import debug_log
+from .input_paths import source_cache_key, validate_source_outputs
+from .work_planning import DEFAULT_JOB_MAX_CHARS, split_chapter_job, select_chapter_text
+from .work_plan_state import preserve_work_plan
 from .scheduler_types import (
     CPU_IDLE_STEP_SECONDS,
     DEFAULT_MAX_CHARS,
@@ -145,9 +148,11 @@ def build_jobs(
     md_single_chapter: bool = False,
     max_chapter_chars: int = 0,
     md_chapter_heading_level: int = 0,
+    job_max_chars: int = DEFAULT_JOB_MAX_CHARS,
     max_chars: int = DEFAULT_MAX_CHARS,
     max_phoneme_chars: int = 0,
 ) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
+    validate_source_outputs(inputs)
     jobs: list[ChapterJob] = []
     skipped: list[ChapterJob] = []
     chapter_cache_map: dict[Path, Path] = {}
@@ -162,7 +167,8 @@ def build_jobs(
         chapters = [chapter for chapter in source_chapters if chapter.text and chapter.text.strip()]
         if chapters is not document.chapters:
             document = SourceDocument(path=document.path, metadata=document.metadata, chapters=chapters, navigation=document.navigation)
-        cache_key = re_slug(str(source_path))
+        preserve_work_plan(output_dir, source_path, chapters, job_max_chars)
+        cache_key = source_cache_key(source_path)
         cache_path = cache_root / f"{cache_key}.json"
         cache_payload = [
             {"title": chapter.title, "text": chapter.text, "group": chapter.group}
@@ -242,9 +248,18 @@ def build_jobs(
             if not force and complete:
                 skipped.append(job)
             else:
-                if not fresh and not complete:
-                    job.render_max_chars = _load_pinned_render_max_chars(output_dir, job)
-                jobs.append(job)
+                # Keep an existing unsplit checkpoint resumable under its original identity.
+                checkpoint = (output_dir / job.output_subdir / job.output_name).with_suffix(".resume.json")
+                tasks = [job] if checkpoint.exists() else split_chapter_job(job, chapter, job_max_chars, effective_max_chars)
+                for task in tasks:
+                    selected = select_chapter_text(chapter, task.text_start, task.text_end)
+                    task_complete = complete if task is job else is_job_complete(output_dir, task, selected, chapters)
+                    if task_complete and not force:
+                        skipped.append(task)
+                        continue
+                    if not fresh and not task_complete:
+                        task.render_max_chars = _load_pinned_render_max_chars(output_dir, task)
+                    jobs.append(task)
         print(
             f"[batch:scan] source_done path={source_path} "
             f"queued={len(jobs) - source_jobs_before} skipped={len(skipped) - source_skipped_before} "
@@ -291,10 +306,12 @@ def build_worker_command(
     worker_max_chars: int,
     cache_path: Path | None,
 ) -> list[str]:
+    """Build a module invocation; script_path remains accepted for compatibility."""
     command = [
         str(python_exe),
         "-u",
-        str(script_path),
+        "-m",
+        "local_tts_renderer.cli",
         "--input",
         str(source_path),
         "--chapter-index",
@@ -332,6 +349,8 @@ def build_worker_command(
         command.extend(["--md-chapter-heading-level", str(args.md_chapter_heading_level)])
     if getattr(args, "max_chapter_chars", 0) > 0:
         command.extend(["--max-chapter-chars", str(args.max_chapter_chars)])
+    if job.text_end is not None:
+        command.extend(["--chapter-text-start", str(job.text_start), "--chapter-text-end", str(job.text_end)])
     if cache_path is not None:
         command.extend(["--chapter-cache", str(cache_path)])
     if args.force:
@@ -371,7 +390,7 @@ def select_next_job(
             (index, job)
             for index, job in enumerate(pending_jobs)
             if job.preferred_provider in (None, "CPUExecutionProvider")
-            and (is_short_section_title(job.chapter_title) or (job.estimated_chars <= cpu_max_chars and job.estimated_chunks <= allowed_chunks))
+            and (is_short_section_title(job.chapter_title) or (job.estimated_chars <= cpu_max_chars and (job.segment_count > 1 or job.estimated_chunks <= allowed_chunks)))
         ]
         if eligible:
             return min(eligible, key=lambda item: job_key(item[1]))[0]

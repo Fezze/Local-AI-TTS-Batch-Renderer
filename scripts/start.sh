@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 model_free_command=0
 for argument in "$@"; do
   case "$argument" in

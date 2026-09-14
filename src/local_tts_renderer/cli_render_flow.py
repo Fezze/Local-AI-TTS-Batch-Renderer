@@ -289,6 +289,7 @@ def render_audio(
             render_max_chars=max_chars,
             fingerprint=fingerprint,
         )
+    print("[run:render] start", flush=True)
     heartbeat_stop, heartbeat_thread = start_progress_heartbeat(progress_state, heartbeat_seconds)
     try:
         for chapter_index, chapter in enumerate(chapters, start=1):

@@ -1,8 +1,9 @@
-﻿param(
+param(
   [switch]$SkipDoctor
 )
 
 $ErrorActionPreference = "Stop"
+Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 $ForwardArgs = @($args)
 $ModelFreeCommand = $false
 foreach ($Argument in $ForwardArgs) {

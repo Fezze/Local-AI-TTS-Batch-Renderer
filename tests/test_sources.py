@@ -107,6 +107,6 @@ def test_source_registry_loads_epub_spine_item_with_nonstandard_filename() -> No
             )
         document = load_source(source)
         assert [chapter.title for chapter in document.chapters] == ["One"]
-        assert document.chapters[0].text == "One\nHello."
+        assert document.chapters[0].text == "One\n\nHello."
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

@@ -10,6 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from .document_helpers import slugify
+from .scheduler_failures import summarize_job_failure, print_final_job_failure
+from .scheduler_progress import ProgressWatchdog
 
 from .scheduler_jobs import (
     build_worker_command,
@@ -39,28 +41,6 @@ from .scheduler_process import (
     unregister_process,
 )
 from .scheduler_types import ChapterJob, WorkerConfig, WorkerStatus, WORKER_WAIT_LOG_INTERVAL_SECONDS
-
-
-def summarize_job_failure(job_log: Path) -> str | None:
-    if not job_log.exists():
-        return None
-
-    last_line: str | None = None
-    with job_log.open("r", encoding="utf-8", errors="replace") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if line:
-                last_line = line
-    if not last_line:
-        return None
-    return last_line[:240]
-
-
-def print_final_job_failure(worker: WorkerConfig, job: ChapterJob, job_log: Path) -> None:
-    summary = summarize_job_failure(job_log)
-    if summary:
-        print(f"[batch:error] worker={worker.name} chapter={job.chapter_index} detail={summary}", flush=True)
-    print(f"[batch:error] worker={worker.name} chapter={job.chapter_index} log={job_log}", flush=True)
 
 
 def _resolve_retry_route(
@@ -125,6 +105,8 @@ def run_worker(
 
         source_path = job.source_path
         job_slug = re_slug(f"{source_path.stem}-{job.chapter_index:03d}-{job.chapter_title}")
+        if job.segment_count > 1:
+            job_slug += f"-segment-{job.segment_index:04d}"
         output_dir = Path(args.output_dir).resolve()
         source_output_dir = output_dir / slugify(source_path.stem)
         worker_max_chars = resolve_job_max_chars(worker, job, args)
@@ -141,6 +123,8 @@ def run_worker(
         )
 
         env = os.environ.copy()
+        package_root = str(Path(__file__).resolve().parent.parent)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [package_root, env.get("PYTHONPATH")]))
         env["ONNX_PROVIDER"] = worker.provider
         env["PYTHONUTF8"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
@@ -178,6 +162,8 @@ def run_worker(
                 "chapter_title": job.chapter_title,
                 "output_subdir": job.output_subdir,
                 "output_name": job.output_name,
+                "text_start": job.text_start, "text_end": job.text_end,
+                "segment_index": job.segment_index, "segment_count": job.segment_count,
                 "attempt": job.attempt,
                 "log": str(job_log),
             },
@@ -199,7 +185,7 @@ def run_worker(
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     env=env,
-                    cwd=str(script_path.parent),
+                    cwd=str(Path.cwd()),
                     text=True,
                     encoding="utf-8",
                     errors="replace",
@@ -210,6 +196,7 @@ def run_worker(
                 assert process.stdout is not None
                 output_queue: queue.Queue[str | None] = queue.Queue()
                 reader_thread = start_stdout_reader(process.stdout, output_queue)
+                watchdog = ProgressWatchdog(getattr(args, "worker_progress_timeout_seconds", 0.0))
                 last_output_at = time.time()
                 last_wait_log_at = 0.0
                 while True:
@@ -218,76 +205,87 @@ def run_worker(
                     except queue.Empty:
                         if process.poll() is not None and output_queue.empty():
                             break
-                        now = time.time()
-                        idle_seconds = now - last_output_at
-                        effective_timeout = resolve_worker_silence_timeout(args, worker_phase)
-                        if (now - last_wait_log_at) >= WORKER_WAIT_LOG_INTERVAL_SECONDS:
-                            print(
-                                f"[batch:wait] worker={worker.name} chapter={job.chapter_index} phase={worker_phase} "
-                                f"idle={idle_seconds:.1f}s timeout={effective_timeout:.1f}s",
-                                flush=True,
+                        line = ""
+                    if line is None:
+                        break
+                    if line:
+                        watchdog.observe(line, time.monotonic())
+                        last_output_at = time.time()
+                    now = time.time()
+                    idle_seconds = now - last_output_at
+                    effective_timeout = resolve_worker_silence_timeout(args, worker_phase)
+                    if not line and (now - last_wait_log_at) >= WORKER_WAIT_LOG_INTERVAL_SECONDS:
+                        print(
+                            f"[batch:wait] worker={worker.name} chapter={job.chapter_index} phase={worker_phase} "
+                            f"idle={idle_seconds:.1f}s timeout={effective_timeout:.1f}s",
+                            flush=True,
+                        )
+                        if is_debug_enabled(args.debug):
+                            debug_log(
+                                True,
+                                f"worker_waiting worker={worker.name} chapter={job.chapter_index} "
+                                f"phase={worker_phase} seconds_since_output={idle_seconds:.1f}",
                             )
-                            if is_debug_enabled(args.debug):
-                                debug_log(
-                                    True,
-                                    f"worker_waiting worker={worker.name} chapter={job.chapter_index} "
-                                    f"phase={worker_phase} seconds_since_output={idle_seconds:.1f}",
-                                )
-                            last_wait_log_at = now
-                        if idle_seconds >= effective_timeout:
-                            timed_out = True
-                            append_runner_log(
-                                runner_log,
+                        last_wait_log_at = now
+                    reason = "silence"
+                    stalled = watchdog.stalled_seconds(time.monotonic())
+                    if stalled is not None:
+                        idle_seconds, effective_timeout = stalled, watchdog.timeout
+                        reason = "no_progress"
+                    if idle_seconds >= effective_timeout:
+                        timed_out = True
+                        append_runner_log(
+                            runner_log,
+                            {
+                                "ts": timestamp(),
+                                "event": "timeout",
+                                "reason": reason,
+                                "worker": worker.name,
+                                "provider": worker.provider,
+                                "input": str(source_path),
+                                "chapter_index": job.chapter_index,
+                                "chapter_title": job.chapter_title,
+                                "attempt": job.attempt,
+                                "phase": worker_phase,
+                                "idle_seconds": round(idle_seconds, 1),
+                                "timeout_seconds": effective_timeout,
+                                "log": str(job_log),
+                            },
+                        )
+                        handle.write(
+                            json.dumps(
                                 {
                                     "ts": timestamp(),
                                     "event": "timeout",
-                                    "worker": worker.name,
-                                    "provider": worker.provider,
-                                    "input": str(source_path),
-                                    "chapter_index": job.chapter_index,
-                                    "chapter_title": job.chapter_title,
-                                    "attempt": job.attempt,
+                                    "reason": reason,
                                     "phase": worker_phase,
                                     "idle_seconds": round(idle_seconds, 1),
                                     "timeout_seconds": effective_timeout,
-                                    "log": str(job_log),
                                 },
+                                ensure_ascii=False,
                             )
-                            handle.write(
-                                json.dumps(
-                                    {
-                                        "ts": timestamp(),
-                                        "event": "timeout",
-                                        "phase": worker_phase,
-                                        "idle_seconds": round(idle_seconds, 1),
-                                        "timeout_seconds": effective_timeout,
-                                    },
-                                    ensure_ascii=False,
-                                )
-                                + "\n"
-                            )
-                            handle.flush()
-                            print(
-                                f"[batch:timeout] worker={worker.name} chapter={job.chapter_index} phase={worker_phase} "
-                                f"idle={idle_seconds:.1f}s limit={effective_timeout:.1f}s",
-                                flush=True,
-                            )
-                            terminate_process_tree(process, force=False)
-                            try:
-                                process.wait(timeout=10)
-                            except subprocess.TimeoutExpired:
-                                terminate_process_tree(process, force=True)
-                            debug_log(
-                                args.debug,
-                                f"worker_timeout worker={worker.name} chapter={job.chapter_index} attempt={job.attempt}",
-                            )
-                            break
-                        continue
-                    if line is None:
+                            + "\n"
+                        )
+                        handle.flush()
+                        print(
+                            f"[batch:timeout] worker={worker.name} chapter={job.chapter_index} phase={worker_phase} "
+                            f"idle={idle_seconds:.1f}s limit={effective_timeout:.1f}s",
+                            flush=True,
+                        )
+                        terminate_process_tree(process, force=False)
+                        try:
+                            process.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            terminate_process_tree(process, force=True)
+                        debug_log(
+                            args.debug,
+                            f"worker_timeout worker={worker.name} chapter={job.chapter_index} attempt={job.attempt}",
+                        )
                         break
-                    last_output_at = time.time()
+                    if line == "":
+                        continue
                     worker_phase = update_worker_phase(worker_phase, line)
-                    if bootstrap_lock_acquired and not is_bootstrap_phase(worker_phase):
+                    if bootstrap_lock_acquired and worker_phase in {"chapter_load", "render"}:
                         gpu_bootstrap_lock.release()
                         bootstrap_lock_acquired = False
                         print(f"[batch:bootstrap-lock] worker={worker.name} released phase={worker_phase}", flush=True)

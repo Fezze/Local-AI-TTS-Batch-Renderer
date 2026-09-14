@@ -7,6 +7,8 @@ from pathlib import Path
 
 from .cli_audio_utils import create_audio_with_retry, write_mp3_from_wav
 from .cli_cache import load_chapters_from_cache
+from .work_planning import select_chapter_text
+from .input_paths import expand_pattern, validate_source_outputs
 from .cli_models import PartialRunComplete
 from .cli_presentation import print_chapter_summary, print_output_structure_preview, print_toc_tree
 from .cli_models import AudioMetadata
@@ -36,7 +38,7 @@ from .sources.model import SourceChapter
 def expand_inputs(paths: list[str]) -> list[Path]:
     expanded: list[Path] = []
     for item in paths:
-        matches = [Path(p) for p in sorted(Path().glob(item))] if any(ch in item for ch in "*?[]") else [Path(item)]
+        matches = expand_pattern(item)
         expanded.extend(matches)
     unique: list[Path] = []
     seen: set[Path] = set()
@@ -110,6 +112,11 @@ def main() -> int:
         print("--input is required.", file=sys.stderr)
         return 2
 
+    text_start = getattr(args, "chapter_text_start", 0)
+    text_end = getattr(args, "chapter_text_end", None)
+    if (text_start or text_end is not None) and (args.chapter_index is None or text_end is None or text_start < 0 or text_end <= text_start):
+        print("Chapter text ranges require --chapter-index and valid start/end offsets.", file=sys.stderr)
+        return 2
     inputs = expand_inputs(args.input)
     if not inputs:
         print("No input files found.", file=sys.stderr)
@@ -131,6 +138,12 @@ def main() -> int:
                 print_chapter_summary(source_path, chapters)
             print_output_structure_preview(source_path, chapters)
         return 0
+
+    try:
+        validate_source_outputs(inputs, args.output_subdir)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     output_dir = Path(args.output_dir).resolve()
     print(f"[run:init] inputs={len(inputs)} output_dir={output_dir} model_dir={Path(args.model_dir).resolve()}", flush=True)
@@ -200,6 +213,12 @@ def main() -> int:
                 print(f"Invalid --chapter-index {args.chapter_index} for {source_path}.", file=sys.stderr)
                 return 2
             original_chapter = chapters[args.chapter_index - 1]
+            if text_end is not None:
+                try:
+                    original_chapter = select_chapter_text(original_chapter, text_start, text_end)
+                except ValueError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
             chapter_group = original_chapter.group
             chapter_position = args.chapter_index if document.navigation else build_chapter_number_map(chapters)[args.chapter_index]
             chapter_title = original_chapter.title

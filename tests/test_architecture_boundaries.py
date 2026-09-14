@@ -82,3 +82,12 @@ def test_cached_chapters_keep_document_metadata_and_navigation_context() -> None
     assert metadata.source_title == "Real Metadata"
     assert metadata.author == "Author"
     assert group_map["Book / Part"] == Path("01-Book")
+
+
+def test_python_files_stay_within_line_limit() -> None:
+    root = SRC_ROOT.parents[1]
+    paths = [*root.glob("*.py"), *SRC_ROOT.rglob("*.py"),
+             *(root / "scripts").rglob("*.py"), *(root / "tests").rglob("*.py")]
+    oversized = [str(path.relative_to(root)) for path in paths
+                 if len(path.read_text(encoding="utf-8-sig").splitlines()) > 500]
+    assert oversized == []

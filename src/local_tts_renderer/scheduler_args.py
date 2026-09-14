@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from .sources import supported_suffixes
+from .input_paths import expand_pattern
+from .work_planning import DEFAULT_JOB_MAX_CHARS
 from .defaults import (
     DEFAULT_BOOTSTRAP_SILENCE_TIMEOUT_SECONDS,
     DEFAULT_AGGRESSIVE_GPU_RECOVERY,
@@ -39,12 +42,27 @@ from .defaults import (
     DEFAULT_WARMUP_TEXT,
     DEFAULT_WORKER_SILENCE_TIMEOUT_SECONDS,
 )
+def nonnegative_int(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("value must be nonnegative")
+    return number
+
+
+def nonnegative_seconds(value: str) -> float:
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError("timeout must be finite and nonnegative")
+    return seconds
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local TTS jobs with 2 GPU workers and 1 CPU worker.")
     parser.add_argument("--input", nargs="+", required=True, help="Input files, directories, or glob patterns.")
     parser.add_argument("--output-dir", "--out", dest="output_dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated output.")
     parser.add_argument("--voice", default=DEFAULT_VOICE)
     parser.add_argument("--speed", type=float, default=DEFAULT_SPEED)
+    parser.add_argument("--job-max-chars", type=nonnegative_int, default=DEFAULT_JOB_MAX_CHARS, help="Target characters per worker task; split at paragraphs or sentences, never inside a sentence. 0 disables.")
     parser.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
     parser.add_argument("--max-phoneme-chars", type=int, default=DEFAULT_MAX_PHONEME_CHARS, help="Secondary chunk size cap to avoid phoneme truncation.")
     parser.add_argument("--max-part-minutes", type=float, default=DEFAULT_MAX_PART_MINUTES)
@@ -81,6 +99,7 @@ def parse_args() -> argparse.Namespace:
         help="Write only MP3 files from batch workers.",
     )
     parser.add_argument("--heartbeat-seconds", type=float, default=DEFAULT_HEARTBEAT_SECONDS, help="Worker heartbeat interval.")
+    parser.add_argument("--worker-progress-timeout-seconds", type=nonnegative_seconds, default=0.0, help="Retry after this many seconds without chunk progress during rendering; 0 disables.")
     parser.add_argument("--worker-silence-timeout-seconds", type=float, default=DEFAULT_WORKER_SILENCE_TIMEOUT_SECONDS, help="Kill and retry a worker process if it produces no output for too long.")
     parser.add_argument(
         "--bootstrap-silence-timeout-seconds",
@@ -122,7 +141,7 @@ def expand_inputs(items: list[str]) -> list[Path]:
         if item_path.exists() and item_path.is_dir():
             expanded.extend(sorted(path for path in item_path.iterdir() if path.is_file() and path.suffix.lower() in source_suffixes))
         elif any(ch in item for ch in "*?[]"):
-            expanded.extend(sorted(Path().glob(item)))
+            expanded.extend(expand_pattern(item))
         else:
             expanded.append(item_path)
     unique: list[Path] = []

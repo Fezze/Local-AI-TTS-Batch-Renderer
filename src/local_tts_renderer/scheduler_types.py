@@ -39,6 +39,10 @@ class ChapterJob:
     preferred_provider: str | None = None
     fallback_locked: bool = False
     render_max_chars: int | None = None
+    text_start: int = 0
+    text_end: int | None = None
+    segment_index: int = 1
+    segment_count: int = 1
 
 
 @dataclass

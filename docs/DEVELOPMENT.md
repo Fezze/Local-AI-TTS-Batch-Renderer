@@ -13,14 +13,14 @@ bash scripts/setup.sh --dev
 .\scripts\setup.ps1 -Dev
 ```
 
-Linux setup detects a broken `.venv` and recreates it. This is particularly
-useful when a virtual environment points into an old sandboxed IDE revision.
-Windows parity is tracked as backlog item `B-104`.
+Linux and Windows setup detect a broken `.venv` and recreate it. PowerShell
+setup stops immediately after a failed native command. Setup and start wrappers
+resolve relative paths from the repository root, regardless of the caller directory.
 
-Runtime dependencies currently live in `requirements.txt`, and development
-dependencies in `requirements-dev.txt`. Packaging and install profiles are not
-yet authoritative in `pyproject.toml`; use the setup scripts until `B-101` is
-complete.
+Runtime dependencies live in `requirements.txt`, which also supplies the dynamic
+package dependencies in `pyproject.toml`. Development and offline packaging-test
+tools live in `requirements-dev.txt`. Wheel and editable installations expose
+`local-tts-render` and `local-tts-batch`; separate CPU/CUDA profiles remain in B-101.
 
 ## Tests
 
@@ -41,6 +41,12 @@ Coverage:
 ```
 
 Windows uses `.\.venv\Scripts\python.exe` in place of `./.venv/bin/python`.
+
+Packaging smoke tests build and install wheel/editable packages offline into temporary
+virtual environments and reuse installed runtime dependencies. They exercise both
+console help commands and a worker chapter-list invocation without repository scripts.
+Native Windows PowerShell tests run in the existing Windows CI matrix and skip on Linux.
+Rendering tests use synthetic audio; they do not certify real GPU inference.
 
 Expected protection by change type:
 
