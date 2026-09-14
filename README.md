@@ -100,6 +100,44 @@ an increasing completed count does. The limit also applies while publishing audi
 parts, so allow enough time for slow encoding. Existing silence and bootstrap
 limits remain separate. Timeout logs distinguish `no_progress` from `silence`.
 
+## Chapters, worker tasks and audio files
+
+EPUB reading order comes from the spine, while logical sections come from EPUB 3
+navigation or NCX targets (including `#fragment` anchors), semantic chapter markers
+and headings. Unmarked continuation files stay in the preceding section; a file
+boundary alone no longer creates a chapter. If no structural markers exist, the
+text remains one logical section. A single navigation link does not hide later
+chapter headings, and an empty chapter anchor can introduce text in the next file.
+Inline emphasis stays inside its paragraph.
+
+Batch workers can process different ranges of the same logical chapter in parallel:
+
+```bash
+bash scripts/start-batch.sh --input book.epub --gpu-workers 2 --cpu-workers 1 --job-max-chars 12000
+```
+
+`--job-max-chars` defaults to 12000 and is a soft task-size target. Splits prefer
+paragraph endings; an oversized paragraph is split at sentence endings. A sentence
+longer than the target stays whole, and a chapter heading is kept with its first
+text segment. `--job-max-chars 0` disables task segmentation. Small chapters keep
+their existing output names; split chapters use ordered `-segment-0001` suffixes.
+These task boundaries are separate from the inference chunk limits (`--max-chars`,
+`--max-phoneme-chars`) and the audio part limit (`--max-part-minutes`, default 30).
+A task can produce several audio parts or finish with a shorter file; parts are not
+padded or merged to reach 30 minutes.
+
+Interrupting a batch stops further task launches and retries before terminating
+workers. Workers have up to 10 seconds to finish a fragment and save progress;
+after forced termination, resume uses the last available checkpoint.
+
+Each task retains the logical chapter index and exact text offsets, with its own
+checkpoint, manifest and audio paths. Completed tasks are skipped and interrupted
+tasks resume their pinned chunk size. The saved work plan prevents mixing different
+source contents or task-size settings in the same output directory. To change those,
+use a new `--output-dir`; `--fresh` resets partial rendering, not the saved work plan.
+When EPUB interpretation changes existing chapter boundaries, use a new output
+directory for that book rather than combining old and new layouts.
+
 ## Common usage
 
 Inspect chapters without rendering:

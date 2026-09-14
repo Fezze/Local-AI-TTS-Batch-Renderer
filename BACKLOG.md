@@ -37,16 +37,6 @@ complete.
 - [ ] Use a lightweight CPU profile for unit tests; keep real provider inference in a separate smoke job.
 - [ ] Raise the coverage gate from 50% toward the current 85% baseline after filling critical resume branches.
 
-### B-105: Complete EPUB ingestion coverage
-
-- [ ] Implement and validate semantic EPUB chapter boundaries and independent, resumable worker text ranges (active).
-
-- [ ] Distinguish logical chapters from EPUB spine-file boundaries, and plan bounded worker jobs independently of those boundaries; cover a whole book stored in one HTML file.
-
-- [ ] Preserve separate TOC anchors that point into the same XHTML file.
-- [ ] Support EPUB3 navigation documents in addition to NCX.
-- [ ] Add normalized-document fixtures for both cases before changing rendering.
-
 ## P2 — maintainability, performance, and hardware
 
 ### B-201: Keep the scheduler composition root small

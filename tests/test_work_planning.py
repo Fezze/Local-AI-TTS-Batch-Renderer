@@ -84,3 +84,34 @@ def test_changed_task_size_is_rejected_before_mixing_outputs(tmp_path):
     assert not list(output.rglob('*.mp3'))
     again,_,_=build_jobs([source],output,False,job_max_chars=80)
     assert jobs==again
+
+
+def test_heading_is_not_left_in_a_task_on_its_own():
+    chapter = SourceChapter('Heading', 'Heading\n\nFirst complete sentence. Second complete sentence.')
+    job = ChapterJob(Path('book.epub'),1,'Heading','book','01-Heading',len(chapter.text),3)
+    tasks = split_chapter_job(job,chapter,30,20)
+    assert len(tasks)==2
+    assert chapter.text[tasks[0].text_start:tasks[0].text_end]=='Heading\n\nFirst complete sentence. '
+    assert ''.join(chapter.text[t.text_start:t.text_end] for t in tasks)==chapter.text
+
+
+def test_existing_unsplit_checkpoint_keeps_original_task_identity(tmp_path):
+    source=tmp_path/'book.md'
+    source.write_text('# Chapter\n\n'+('A complete sentence.\n\n'*20))
+    out=tmp_path/'out'
+    checkpoint=out/'book'/'01-Chapter.resume.json'
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_text('{"render_max_chars":777}')
+    jobs,skipped,_=build_jobs([source],out,False,job_max_chars=80)
+    assert not skipped and len(jobs)==1
+    assert jobs[0].text_start==0 and jobs[0].text_end is None
+    assert jobs[0].output_name=='01-Chapter'
+    assert jobs[0].render_max_chars==777
+
+
+def test_dots_in_chapter_titles_do_not_collapse_segment_paths():
+    chapter=SourceChapter('Mr. Example', 'First sentence.\n\nSecond sentence.\n\nThird sentence.')
+    job=ChapterJob(Path('book.epub'),1,chapter.title,'book','01-Mr. Example',len(chapter.text),3)
+    tasks=split_chapter_job(job,chapter,20,20)
+    manifests=[Path(task.output_name).with_suffix('.json') for task in tasks]
+    assert len(set(manifests))==len(tasks)==3

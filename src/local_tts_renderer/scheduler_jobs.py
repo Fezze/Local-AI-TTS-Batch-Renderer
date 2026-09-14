@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
+from itertools import repeat
 import json
+import multiprocessing
 import os
 import re
 import shutil
 import tempfile
 import time
-from collections.abc import Sequence
 from pathlib import Path
 
 from .document_helpers import (
@@ -16,8 +18,8 @@ from .document_helpers import (
     sanitize_filename_component,
     slugify,
 )
-from .cli_render_cleanup import load_complete_manifest, read_untrusted_resume_state, reset_render_artifacts
-from .sources import MarkdownIngestOptions, SourceChapter, SourceDocument, SourceLoadOptions, load_source
+from .cli_render_cleanup import read_untrusted_resume_state, reset_render_artifacts
+from .sources import SourceChapter, SourceDocument
 
 from .defaults import (
     DEFAULT_CPU_MAX_CHARS,
@@ -25,6 +27,8 @@ from .defaults import (
     DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS,
 )
 from .scheduler_logging import debug_log
+from .scheduler_completion import CompletionCache, is_job_complete
+from .scheduler_scan import build_jobs_for_source, load_document_for_jobs
 from .input_paths import source_cache_key, validate_source_outputs
 from .work_planning import DEFAULT_JOB_MAX_CHARS, split_chapter_job, select_chapter_text
 from .work_plan_state import preserve_work_plan
@@ -38,24 +42,6 @@ from .scheduler_types import (
 )
 
 
-def _load_document_for_jobs(
-    source_path: Path,
-    md_single_chapter: bool,
-    max_chapter_chars: int,
-    md_chapter_heading_level: int,
-) -> SourceDocument:
-    return load_source(
-        source_path,
-        SourceLoadOptions(
-            markdown=MarkdownIngestOptions(
-                single_chapter=md_single_chapter,
-                max_chapter_chars=max_chapter_chars,
-                chapter_heading_level=md_chapter_heading_level,
-            )
-        ),
-    )
-
-
 def cpu_allowed_chunk_budget(statuses: dict[str, WorkerStatus], worker_name: str) -> int:
     status = statuses.get(worker_name)
     if status is None:
@@ -63,58 +49,6 @@ def cpu_allowed_chunk_budget(statuses: dict[str, WorkerStatus], worker_name: str
     idle_since = status.idle_since or time.time()
     idle_seconds = max(time.time() - idle_since, 0.0)
     return max(1, 1 + int(idle_seconds // CPU_IDLE_STEP_SECONDS))
-
-
-def is_job_complete(
-    output_dir: Path,
-    job: ChapterJob,
-    expected_chapter: SourceChapter,
-    expected_document_chapters: Sequence[SourceChapter],
-) -> bool:
-    primary_output_root = output_dir / job.output_subdir
-    source_output_root = output_dir / slugify(job.source_path.stem)
-    candidate_manifests: list[tuple[Path, Path, str | None, Sequence[SourceChapter]]] = [
-        (
-            (primary_output_root / job.output_name).with_suffix(".json"),
-            primary_output_root,
-            job.output_name,
-            [expected_chapter],
-        ),
-        (
-            source_output_root.with_suffix(".json"),
-            source_output_root,
-            None,
-            expected_document_chapters,
-        ),
-    ]
-    group_manifest_path = primary_output_root.with_suffix(".json")
-    if group_manifest_path not in {candidate[0] for candidate in candidate_manifests}:
-        group_chapters = [
-            chapter
-            for chapter in expected_document_chapters
-            if chapter.group == expected_chapter.group
-        ]
-        candidate_manifests.insert(
-            1,
-            (group_manifest_path, primary_output_root.with_suffix(""), None, group_chapters),
-        )
-
-    for manifest_path, output_root, final_stem_override, expected_chapters in candidate_manifests:
-        if not manifest_path.exists():
-            continue
-        try:
-            complete = load_complete_manifest(
-                manifest_path=manifest_path,
-                base_output_dir=output_dir,
-                output_root=output_root,
-                final_stem_override=final_stem_override,
-                expected_chapters=[(chapter.title, chapter.text) for chapter in expected_chapters],
-            )
-        except OSError:
-            continue
-        if complete is not None:
-            return True
-    return False
 
 
 def reset_job_for_fresh_run(output_dir: Path, job: ChapterJob) -> tuple[Path, ...]:
@@ -153,16 +87,65 @@ def build_jobs(
     max_phoneme_chars: int = 0,
 ) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
     validate_source_outputs(inputs)
+    scan_workers = min(os.cpu_count() or 1, len(inputs))
+    if scan_workers > 1:
+        with ProcessPoolExecutor(
+            max_workers=scan_workers,
+            mp_context=multiprocessing.get_context("spawn"),
+        ) as executor:
+            source_results = executor.map(
+                build_jobs_for_source,
+                inputs,
+                repeat(output_dir),
+                repeat(fresh),
+                repeat(debug),
+                repeat(force),
+                repeat(md_single_chapter),
+                repeat(max_chapter_chars),
+                repeat(md_chapter_heading_level),
+                repeat(job_max_chars),
+                repeat(max_chars),
+                repeat(max_phoneme_chars),
+            )
+            results = list(source_results)
+        jobs = [job for source_jobs, _, _ in results for job in source_jobs]
+        skipped = [job for _, source_skipped, _ in results for job in source_skipped]
+        chapter_cache_map = {
+            source_path: cache_path
+            for _, _, source_cache_map in results
+            for source_path, cache_path in source_cache_map.items()
+        }
+        return jobs, skipped, chapter_cache_map
+
     jobs: list[ChapterJob] = []
     skipped: list[ChapterJob] = []
     chapter_cache_map: dict[Path, Path] = {}
     cache_root = output_dir / ".cache" / "chapter-index"
     cache_root.mkdir(parents=True, exist_ok=True)
+    scan_cache_root = output_dir / ".cache" / "source-scan"
+    scan_cache_root.mkdir(parents=True, exist_ok=True)
+    scan_started_at = {source_path: time.time() for source_path in inputs}
     for source_path in inputs:
-        source_started = time.time()
         print(f"[batch:scan] source_start path={source_path}", flush=True)
-        chapters_load_started = time.time()
-        document = _load_document_for_jobs(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
+    documents = {
+        source_path: load_document_for_jobs(
+            source_path,
+            scan_cache_root,
+            md_single_chapter,
+            max_chapter_chars,
+            md_chapter_heading_level,
+        )
+        for source_path in inputs
+    }
+    for source_path in inputs:
+        source_started = scan_started_at[source_path]
+        document, cache_hit = documents[source_path]
+        if cache_hit:
+            print(
+                f"[batch:scan] source_cached path={source_path} chapters={len(document.chapters)} "
+                f"elapsed={time.time() - source_started:.1f}s",
+                flush=True,
+            )
         source_chapters = document.chapters
         chapters = [chapter for chapter in source_chapters if chapter.text and chapter.text.strip()]
         if chapters is not document.chapters:
@@ -176,21 +159,23 @@ def build_jobs(
         ]
         cache_path.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
         chapter_cache_map[source_path] = cache_path
-        print(
-            f"[batch:scan] chapters_loaded path={source_path} chapters={len(chapters)} "
-            f"elapsed={time.time() - chapters_load_started:.1f}s",
-            flush=True,
-        )
+        if not cache_hit:
+            print(
+                f"[batch:scan] chapters_loaded path={source_path} chapters={len(chapters)} "
+                f"elapsed={time.time() - source_started:.1f}s",
+                flush=True,
+            )
         group_dir_map = build_group_directory_map(document.chapters)
         root_title_index_map: dict[str, int] = {}
         used_output_names: dict[str, set[str]] = {}
         if document.navigation:
             toc_started = time.time()
-            print(
-                f"[batch:scan] navigation_loaded path={source_path} nodes={len(document.navigation)} "
-                f"elapsed={time.time() - toc_started:.1f}s",
-                flush=True,
-            )
+            if not cache_hit:
+                print(
+                    f"[batch:scan] navigation_loaded path={source_path} nodes={len(document.navigation)} "
+                    f"elapsed={time.time() - toc_started:.1f}s",
+                    flush=True,
+                )
             group_dir_map = build_group_directory_map_from_navigation(
                 document.navigation,
                 {chapter.group for chapter in chapters if chapter.group},
@@ -202,6 +187,7 @@ def build_jobs(
         root_slot_counter = 0
         source_jobs_before = len(jobs)
         source_skipped_before = len(skipped)
+        completion_cache: CompletionCache = {}
         for chapter_index, chapter in enumerate(chapters, start=1):
             title_component = sanitize_filename_component(chapter.title)
             output_subdir = Path(source_slug)
@@ -244,6 +230,7 @@ def build_jobs(
                 job,
                 expected_chapter=chapter,
                 expected_document_chapters=chapters,
+                completion_cache=completion_cache,
             )
             if not force and complete:
                 skipped.append(job)
@@ -253,7 +240,13 @@ def build_jobs(
                 tasks = [job] if checkpoint.exists() else split_chapter_job(job, chapter, job_max_chars, effective_max_chars)
                 for task in tasks:
                     selected = select_chapter_text(chapter, task.text_start, task.text_end)
-                    task_complete = complete if task is job else is_job_complete(output_dir, task, selected, chapters)
+                    task_complete = complete if task is job else is_job_complete(
+                        output_dir,
+                        task,
+                        selected,
+                        chapters,
+                        completion_cache,
+                    )
                     if task_complete and not force:
                         skipped.append(task)
                         continue
@@ -261,7 +254,7 @@ def build_jobs(
                         task.render_max_chars = _load_pinned_render_max_chars(output_dir, task)
                     jobs.append(task)
         print(
-            f"[batch:scan] source_done path={source_path} "
+            f"[batch:plan] source_done path={source_path} "
             f"queued={len(jobs) - source_jobs_before} skipped={len(skipped) - source_skipped_before} "
             f"elapsed={time.time() - source_started:.1f}s",
             flush=True,

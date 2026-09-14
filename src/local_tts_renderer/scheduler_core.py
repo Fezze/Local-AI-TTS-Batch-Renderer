@@ -18,6 +18,7 @@ from .scheduler_logging import append_runner_log, debug_log, timestamp
 from .scheduler_process import (
     start_console_controls,
     terminate_all_active_processes,
+    wait_for_active_processes,
 )
 from .scheduler_runtime import run_worker
 from .scheduler_setup import log_scheduler_runtime, prepare_scheduler_runtime
@@ -112,6 +113,7 @@ def main() -> int:
         workers=workers,
         enabled=not args.no_console_controls,
     )
+    args._scheduler_stop = threading.Event()
     pending_jobs = list(chapter_jobs)
     gpu_bootstrap_lock = threading.Lock()
     debug_log(args.debug, f"pending_jobs_initialized={len(pending_jobs)} total_chunks={total_chunks}")
@@ -130,8 +132,15 @@ def main() -> int:
         for thread in threads:
             thread.join()
     except KeyboardInterrupt:
-        terminate_all_active_processes(force=True)
-        print("[batch] interrupted | terminated active worker processes", flush=True)
+        with scheduler_condition:
+            args._scheduler_stop.set()
+            scheduler_condition.notify_all()
+        terminate_all_active_processes(force=False)
+        if not wait_for_active_processes(timeout_seconds=10.0):
+            terminate_all_active_processes(force=True)
+        for thread in threads:
+            thread.join()
+        print("[batch] interrupted | resume from available worker checkpoints", flush=True)
         done_jobs = counters["done"]
         failed_jobs = counters["failed"]
         pending_count = max(len(pending_jobs), len(chapter_jobs) - done_jobs - failed_jobs, 0)

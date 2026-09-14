@@ -14,11 +14,10 @@ class ChapterCollector:
     def __init__(self, fallback_title: str):
         self.fallback_title = fallback_title
         self.chapters: list[SourceChapter] = []
+        self.pending: tuple[str, str | None] | None = None
 
     def add_document(self, body: ET.Element, path: str, toc: dict[str, tuple[list[str], bool]]) -> None:
         text, anchors, headings = _text_positions(body)
-        if not text.strip():
-            return
         boundaries: dict[int, tuple[str, str | None]] = {}
         fragment_boundaries = False
         for href, (titles, has_children) in toc.items():
@@ -31,16 +30,16 @@ class ChapterCollector:
             position = anchors[fragment] if fragment else 0
             boundaries[position] = (titles[-1], join_group_path(titles if has_children else titles[:-1]))
             fragment_boundaries |= bool(fragment)
-        # Exact TOC fragments define the author's navigation. Otherwise headings
-        # expose chapters inside one HTML resource, regardless of its file size.
-        if not fragment_boundaries:
+        # Multiple exact TOC targets define navigation. A lone entry point must
+        # not hide chapter headings further inside the same resource.
+        if not fragment_boundaries or len(boundaries) == 1:
             for position, title in headings:
                 if boundaries and not text[:position].strip():
                     continue
                 boundaries.setdefault(position, (title, None))
         positions = sorted(boundaries)
         cursor = 0
-        current: tuple[str, str | None] | None = None
+        current = self.pending
         for position in [*positions, len(text)]:
             payload = clean_plain_text(text[cursor:position])
             if payload:
@@ -55,6 +54,7 @@ class ChapterCollector:
             if position in boundaries:
                 current = boundaries[position]
             cursor = position
+        self.pending = current
 
 
 def _text_positions(body: ET.Element) -> tuple[str, dict[str, int], list[tuple[int, str]]]:

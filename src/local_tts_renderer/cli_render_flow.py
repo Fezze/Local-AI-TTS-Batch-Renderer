@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -29,6 +30,11 @@ from .cli_runtime import start_progress_heartbeat
 from .sources.model import SourceChapter as Chapter
 
 CREATE_AUDIO_WITH_RETRY = create_audio_with_retry
+TERMINATION_REQUESTED = threading.Event()
+
+
+def request_termination() -> None:
+    TERMINATION_REQUESTED.set()
 
 
 def render_chunk_audio(
@@ -150,6 +156,7 @@ def render_audio(
     fresh: bool = False,
     model_identity: dict[str, object] | str | None = None,
 ) -> dict:
+    TERMINATION_REQUESTED.clear()
     manifest_root = output_root / final_stem_override if final_stem_override else output_root
     manifest_path = manifest_root.with_suffix(".json")
     checkpoint_path = manifest_root.with_suffix(".resume.json")
@@ -387,6 +394,9 @@ def render_audio(
                 current_writer.write_audio(audio)
                 manifest_chunks.append(manifest_chunk)
                 next_chunk_index = chunk.index + 1
+                next_chapter_index = chapter_index if next_chunk_index <= chapter_end_index else chapter_index + 1
+                if TERMINATION_REQUESTED.is_set():
+                    raise KeyboardInterrupt
                 if max_part_samples is not None and current_writer.samples_written >= max_part_samples:
                     has_more_chunks_in_chapter = next_chunk_index <= chapter_end_index
                     output_parts.append(
@@ -421,6 +431,34 @@ def render_audio(
         if current_writer is not None:
             output_parts.append(current_writer.close())
             current_writer = None
+    except KeyboardInterrupt:
+        if current_writer is not None:
+            output_parts.append(
+                current_writer.close(
+                    force_numbered_first_part=(
+                        bool(final_stem_override)
+                        and current_writer.part_index == 1
+                        and next_chunk_index <= total_chunks
+                    )
+                )
+            )
+            current_writer = None
+            part_index += 1
+            save_safe_checkpoint(
+                checkpoint_path,
+                next_chapter_index=next_chapter_index,
+                next_chunk_index=next_chunk_index,
+                completed_chunks=len(manifest_chunks),
+                elapsed_seconds=progress_state["elapsed_offset"] + (time.time() - progress_state["started_at"]),
+                sample_rate=sample_rate,
+                output_parts=output_parts,
+                manifest_chunks=manifest_chunks,
+                next_group=current_group,
+                next_part_index=part_index,
+                render_max_chars=max_chars,
+                fingerprint=fingerprint,
+            )
+        raise
     finally:
         if current_writer is not None:
             current_writer.abort()

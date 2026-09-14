@@ -205,6 +205,7 @@ def test_scheduler_main_interrupt_reports_pending_and_returns_130(monkeypatch) -
         monkeypatch.setattr(core, "append_runner_log", lambda _path, payload: logs.append(payload))
         monkeypatch.setattr(core, "start_console_controls", lambda **_k: (__import__("threading").Event(), None))
         monkeypatch.setattr(core, "terminate_all_active_processes", lambda force: terminated.append(force))
+        monkeypatch.setattr(core, "wait_for_active_processes", lambda **_k: True)
         monkeypatch.setattr(core.shutil, "rmtree", lambda *_a, **_k: None)
 
         class InterruptThread:
@@ -215,12 +216,13 @@ def test_scheduler_main_interrupt_reports_pending_and_returns_130(monkeypatch) -
                 return None
 
             def join(self) -> None:
-                raise KeyboardInterrupt
+                if not args._scheduler_stop.is_set():
+                    raise KeyboardInterrupt
 
         monkeypatch.setattr(core.threading, "Thread", InterruptThread)
 
         assert core.main() == 130
-        assert terminated == [True]
+        assert terminated == [False]
         interrupted = logs[-1]
         assert interrupted["event"] == "batch_interrupt"
         assert interrupted["done"] == 0

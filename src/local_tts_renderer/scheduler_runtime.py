@@ -74,9 +74,12 @@ def run_worker(
     chapter_cache_map: dict[Path, Path],
     gpu_bootstrap_lock,
 ) -> None:
+    stop_event = getattr(args, "_scheduler_stop", None)
     while True:
         with scheduler_condition:
             while True:
+                if stop_event is not None and stop_event.is_set():
+                    return
                 if is_scheduler_paused():
                     scheduler_condition.wait(timeout=0.5)
                     continue
@@ -180,19 +183,26 @@ def run_worker(
             with job_log.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps({"ts": timestamp(), "worker": worker.name, "provider": worker.provider, "attempt": job.attempt, "max_chars": worker_max_chars, "trim_mode": args.trim_mode, "command": command}, ensure_ascii=False) + "\n")
                 handle.flush()
-                process = subprocess.Popen(
-                    command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                    cwd=str(Path.cwd()),
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                    start_new_session=(os.name != "nt"),
-                )
-                register_process(worker.name, process)
+                with scheduler_condition:
+                    if stop_event is not None and stop_event.is_set():
+                        counters["active"] -= 1
+                        pending_jobs.append(job)
+                        statuses[worker.name] = WorkerStatus()
+                        scheduler_condition.notify_all()
+                        return
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                        cwd=str(Path.cwd()),
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        bufsize=1,
+                        start_new_session=(os.name != "nt"),
+                    )
+                    register_process(worker.name, process)
                 assert process.stdout is not None
                 output_queue: queue.Queue[str | None] = queue.Queue()
                 reader_thread = start_stdout_reader(process.stdout, output_queue)
@@ -393,6 +403,8 @@ def run_worker(
             if return_code == 0:
                 counters["done"] += 1
                 counters["completed_chunks"] += job.estimated_chunks
+            elif stop_event is not None and stop_event.is_set():
+                pending_jobs.append(job)
             elif return_code == 75 and args.max_parts_per_run > 0:
                 pending_jobs.append(job)
                 append_runner_log(

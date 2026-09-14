@@ -20,7 +20,7 @@ def natural_text_ranges(text: str, target: int) -> list[tuple[int, int]]:
     sentences = []
     for match in re.finditer(r'''[.!?…]["'”’»)]*\s+(?=[A-ZÀ-ÖØ-ÞĄĆĘŁŃÓŚŹŻ0-9“"'‘«])''', text):
         if text[match.start()] == '.':
-            token = re.search(r"(\w+)$", text[:match.start()])
+            token = re.search(r"(\w+)$", text[max(0, match.start() - 64):match.start()])
             if token and (len(token[0]) == 1 or token[0].lower() in abbreviations):
                 continue
         sentences.append(match.end())
@@ -53,11 +53,15 @@ def select_chapter_text(chapter: SourceChapter, start: int = 0, end: int | None 
 def split_chapter_job(job: ChapterJob, chapter: SourceChapter, target: int,
                       chunk_chars: int) -> list[ChapterJob]:
     ranges = natural_text_ranges(chapter.text, target)
+    if len(ranges) > 1 and chapter.text[:ranges[0][1]].strip() == chapter.title.strip():
+        ranges = [(0, ranges[1][1]), *ranges[2:]]
     if len(ranges) == 1:
         return [job]
+    # Output stems must not acquire a suffix that with_suffix() can replace.
+    segment_stem = job.output_name.replace(".", "-")
     return [replace(
         job,
-        output_name=f'{job.output_name}-segment-{index:04d}',
+        output_name=f'{segment_stem}-segment-{index:04d}',
         text_start=start, text_end=end, segment_index=index, segment_count=len(ranges),
         estimated_chars=end-start,
         estimated_chunks=max(1, (end-start+chunk_chars-1)//chunk_chars),

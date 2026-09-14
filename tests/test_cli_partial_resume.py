@@ -167,6 +167,50 @@ def test_render_audio_resumes_cleanly_after_failure_before_first_close(monkeypat
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
+def test_render_audio_interrupt_closes_current_part_and_resumes(monkeypatch: pytest.MonkeyPatch) -> None:
+    rendered_texts: list[str] = []
+
+    def fake_create_audio_with_retry(**kwargs):  # type: ignore[no-untyped-def]
+        rendered_texts.append(kwargs["text"])
+        return [np.zeros(SAMPLES_PER_CHUNK, dtype=np.float32)], SAMPLE_RATE
+
+    original_write_audio = cli_render_flow.OutputPartWriter.write_audio
+    calls = 0
+
+    def request_termination_after_second_chunk(self, audio):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        original_write_audio(self, audio)
+        calls += 1
+        if calls == 2:
+            cli_render_flow.request_termination()
+
+    monkeypatch.setattr(cli_render_flow, "CREATE_AUDIO_WITH_RETRY", fake_create_audio_with_retry)
+    monkeypatch.setattr(cli_render_flow.OutputPartWriter, "write_audio", request_termination_after_second_chunk)
+    chapters = _resume_chapters()
+    expected_chunks = _expected_chunk_count(chapters)
+    tmp_path = Path.cwd() / ".test_tmp" / f"tts-cli-interrupt-resume-{uuid.uuid4().hex}"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    try:
+        kwargs = _render_kwargs(tmp_path, chapters)
+        kwargs["max_part_minutes"] = 10.0
+        checkpoint_path = (kwargs["output_root"] / "04-Section Alpha").with_suffix(".resume.json")
+
+        with pytest.raises(KeyboardInterrupt):
+            cli.render_audio(**kwargs)
+
+        state = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        assert state["completed_chunks"] == 2
+        assert state["next_chunk_index"] == 3
+        assert len(state["output_parts"]) == 1
+
+        monkeypatch.setattr(cli_render_flow.OutputPartWriter, "write_audio", original_write_audio)
+        manifest = cli.render_audio(**kwargs)
+
+        assert len(rendered_texts) == expected_chunks
+        assert [chunk["index"] for chunk in manifest["chunks"]] == list(range(1, expected_chunks + 1))
+        assert not checkpoint_path.exists()
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
 
 def test_default_render_preserves_orphaned_final_output(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -191,7 +235,6 @@ def test_default_render_preserves_orphaned_final_output(monkeypatch: pytest.Monk
         assert not checkpoint_path.exists()
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
-
 
 def test_resume_removes_part_closed_before_checkpoint_save(monkeypatch: pytest.MonkeyPatch) -> None:
     rendered_texts: list[str] = []
@@ -240,7 +283,6 @@ def test_resume_removes_part_closed_before_checkpoint_save(monkeypatch: pytest.M
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
-
 def test_force_resumes_after_closed_part_without_rendering_committed_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
     rendered_texts: list[str] = []
 
@@ -275,7 +317,6 @@ def test_force_resumes_after_closed_part_without_rendering_committed_chunks(monk
         assert not checkpoint_path.exists()
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
-
 
 @pytest.mark.parametrize("manifest_kind", ["corrupt", "partial"])
 def test_checkpoint_takes_precedence_over_incomplete_manifest(

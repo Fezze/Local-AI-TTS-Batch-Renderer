@@ -25,7 +25,7 @@ def test_internal_modules_do_not_use_input_parsers_facade() -> None:
 
 
 def test_orchestration_uses_source_layer_without_legacy_escape_hatches() -> None:
-    for module in ("cli_entry.py", "scheduler_jobs.py"):
+    for module in ("cli_entry.py", "scheduler_scan.py"):
         text = _read_module(module)
         assert "load_source" in text
         assert "_ORIGINAL_LOAD_CHAPTERS" not in text

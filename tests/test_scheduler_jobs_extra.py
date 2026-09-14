@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from local_tts_renderer import scheduler_completion as sc
 from local_tts_renderer import scheduler_jobs as sj
+from local_tts_renderer import scheduler_scan as ss
 from local_tts_renderer.scheduler_types import ChapterJob, WorkerStatus
 from local_tts_renderer.sources.model import SourceChapter as Chapter
 from local_tts_renderer.sources.model import SourceDocument, SourceMetadata, SourceNavigationNode
@@ -107,6 +109,25 @@ def test_is_job_complete_and_cpu_budget() -> None:
         assert sj.cpu_allowed_chunk_budget(status, "cpu-1") >= 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_is_job_complete_reuses_a_manifest_check(monkeypatch) -> None:
+    job = ChapterJob(Path("book.md"), 1, "One", "book", "01-One", 5, 1)
+    chapter = Chapter(title="One", text="Text.")
+    calls = 0
+
+    def fake_load_complete_manifest(**_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return {"complete": True}
+
+    monkeypatch.setattr(sc, "load_complete_manifest", fake_load_complete_manifest)
+    monkeypatch.setattr(Path, "exists", lambda _self: True)
+    completion_cache: sc.CompletionCache = {}
+
+    assert sc.is_job_complete(Path("out"), job, chapter, [chapter], completion_cache)
+    assert sc.is_job_complete(Path("out"), job, chapter, [chapter], completion_cache)
+    assert calls == 1
 
 
 def test_is_job_complete_falls_back_to_valid_full_source_manifest() -> None:
@@ -211,13 +232,87 @@ def test_build_jobs_md_and_epub_paths(monkeypatch) -> None:
                 )
             return SourceDocument(path=path, metadata=SourceMetadata(source_title="neutral"), chapters=chapters_md)
 
-        monkeypatch.setattr(sj, "load_source", fake_load_source)
+        monkeypatch.setattr(ss, "load_source", fake_load_source)
         monkeypatch.setattr(sj, "is_job_complete", lambda *_a, **_k: False)
+        monkeypatch.setattr(sj.os, "cpu_count", lambda: 1)
 
         jobs, skipped, cache_map = sj.build_jobs([src_md, src_epub], out, fresh=False, debug=False)
         assert len(jobs) == 3
         assert len(skipped) == 0
         assert src_md in cache_map and src_epub in cache_map
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_source_scan_cache_reuses_unchanged_document(monkeypatch) -> None:
+    tmp = _mk_tmp_dir()
+    try:
+        source = tmp / "book.md"
+        source.write_text("# Head\nText", encoding="utf-8")
+        loads = 0
+        document = SourceDocument(
+            path=source,
+            metadata=SourceMetadata(source_title="Book"),
+            chapters=[Chapter(title="Intro", text="text", group="Part")],
+            navigation=[SourceNavigationNode(title="Part", children=[SourceNavigationNode(title="Intro")])],
+        )
+
+        def fake_load_source(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+            nonlocal loads
+            loads += 1
+            return document
+
+        monkeypatch.setattr(ss, "load_source", fake_load_source)
+        cache_root = tmp / "cache"
+        loaded, cache_hit = ss.load_document_for_jobs(source, cache_root, False, 0, 0)
+        cached, cached_hit = ss.load_document_for_jobs(source, cache_root, False, 0, 0)
+
+        assert loads == 1
+        assert cache_hit is False
+        assert cached_hit is True
+        assert cached == loaded
+        assert cached.navigation == document.navigation
+
+        source.write_text("# Head\nChanged text", encoding="utf-8")
+        _, changed_hit = ss.load_document_for_jobs(source, cache_root, False, 0, 0)
+
+        assert loads == 2
+        assert changed_hit is False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_build_jobs_logs_cached_source_without_parse_messages(monkeypatch, capsys) -> None:
+    tmp = _mk_tmp_dir()
+    try:
+        source = tmp / "book.md"
+        source.write_text("# Intro\nText", encoding="utf-8")
+        monkeypatch.setattr(sj.os, "cpu_count", lambda: 1)
+
+        sj.build_jobs([source], tmp / "out", fresh=False)
+        capsys.readouterr()
+        sj.build_jobs([source], tmp / "out", fresh=False)
+        output = capsys.readouterr().out
+
+        assert "[batch:scan] source_cached" in output
+        assert "[batch:scan] chapters_loaded" not in output
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_build_jobs_scans_multiple_sources_with_process_pool() -> None:
+    tmp = _mk_tmp_dir()
+    try:
+        out = tmp / "out"
+        sources = [tmp / f"book-{index}.md" for index in range(2)]
+        for source in sources:
+            source.write_text("# Head\nText", encoding="utf-8")
+
+        jobs, skipped, cache_map = sj.build_jobs(sources, out, fresh=False)
+
+        assert [job.source_path for job in jobs] == sources
+        assert not skipped
+        assert set(cache_map) == set(sources)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -236,7 +331,7 @@ def test_build_jobs_flag_matrix_skips_completed_unless_forced(monkeypatch, fresh
             metadata=SourceMetadata(source_title="neutral"),
             chapters=[Chapter(title="Intro", text="text", group=None)],
         )
-        monkeypatch.setattr(sj, "load_source", lambda *_a, **_k: document)
+        monkeypatch.setattr(ss, "load_source", lambda *_a, **_k: document)
         checked_chapters: list[Chapter] = []
 
         def fake_is_job_complete(  # type: ignore[no-untyped-def]
@@ -245,6 +340,7 @@ def test_build_jobs_flag_matrix_skips_completed_unless_forced(monkeypatch, fresh
             *,
             expected_chapter,
             expected_document_chapters,
+            completion_cache=None,
         ):
             checked_chapters.append(expected_chapter)
             assert expected_document_chapters == document.chapters
@@ -280,7 +376,7 @@ def test_build_jobs_restores_chunk_size_pin_after_scheduler_restart(
         checkpoint = out / "neutral" / "01-Intro.resume.json"
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         checkpoint.write_text(json.dumps({"render_max_chars": 777}), encoding="utf-8")
-        monkeypatch.setattr(sj, "load_source", lambda *_a, **_k: document)
+        monkeypatch.setattr(ss, "load_source", lambda *_a, **_k: document)
         monkeypatch.setattr(sj, "is_job_complete", lambda *_a, **_k: False)
 
         jobs, skipped, _ = sj.build_jobs([source], out, fresh=fresh)

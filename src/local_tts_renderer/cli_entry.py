@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import sys
 import time
 from pathlib import Path
@@ -12,7 +13,7 @@ from .input_paths import expand_pattern, validate_source_outputs
 from .cli_models import PartialRunComplete
 from .cli_presentation import print_chapter_summary, print_output_structure_preview, print_toc_tree
 from .cli_models import AudioMetadata
-from .cli_render_flow import render_audio
+from .cli_render_flow import render_audio, request_termination
 from .cli_runtime import (
     configure_onnx_provider,
     configure_runtime_temp_dir,
@@ -33,6 +34,10 @@ from .document_helpers import (
 from .providers import parse_provider_priority
 from .sources import MarkdownIngestOptions, SourceDocument, SourceLoadOptions, load_source
 from .sources.model import SourceChapter
+
+
+def _interrupt_on_termination(_signum: int, _frame: object) -> None:
+    request_termination()
 
 
 def expand_inputs(paths: list[str]) -> list[Path]:
@@ -87,6 +92,8 @@ def _group_directory_map_for_source(document: SourceDocument) -> dict[str, Path]
 
 
 def main() -> int:
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _interrupt_on_termination)
     args = parse_args()
     md_single_chapter = getattr(args, "md_single_chapter", False)
     max_chapter_chars = getattr(args, "max_chapter_chars", 0)

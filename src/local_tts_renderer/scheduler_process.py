@@ -55,6 +55,19 @@ def terminate_all_active_processes(force: bool = True) -> None:
         terminate_process_tree(process, force=force)
 
 
+def wait_for_active_processes(timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        with _ACTIVE_PROCESSES_LOCK:
+            processes = list(_ACTIVE_PROCESSES.values())
+        if all(process.poll() is not None for process in processes):
+            return True
+        time.sleep(0.1)
+    with _ACTIVE_PROCESSES_LOCK:
+        processes = list(_ACTIVE_PROCESSES.values())
+    return all(process.poll() is not None for process in processes)
+
+
 def terminate_active_process(worker_name: str, force: bool = True) -> bool:
     with _ACTIVE_PROCESSES_LOCK:
         process = _ACTIVE_PROCESSES.get(worker_name)
