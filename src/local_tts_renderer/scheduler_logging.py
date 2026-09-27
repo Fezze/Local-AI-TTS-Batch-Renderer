@@ -84,7 +84,7 @@ def update_worker_phase(current_phase: str, line: str) -> str:
         return "bootstrap_session"
     if "[run:warmup] start" in text:
         return "warmup"
-    if "[run:warmup] done" in text:
+    if "[run:warmup] done" in text or text.startswith("[run:worker-ready]"):
         return "chapter_load"
     if text.startswith("[run:render] start"):
         return "render"

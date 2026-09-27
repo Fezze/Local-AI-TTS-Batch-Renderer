@@ -58,6 +58,34 @@ print(json.dumps(command + ['--list-chapters']))
     result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'Intro' in result.stdout
+    result = subprocess.run([str(python), '-m', 'local_tts_renderer.worker_server'],
+                            input='{"command":"shutdown"}\n', cwd=tmp_path, env=env,
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ''
+    # Exercise two protocol tasks in the installed package with a synthetic session.
+    protocol_script = """import sys
+from pathlib import Path
+from types import SimpleNamespace
+from local_tts_renderer import cli_entry, worker_server
+cli_entry.initialize_session = lambda *a: (SimpleNamespace(sess=SimpleNamespace(get_providers=lambda: ['CPUExecutionProvider'])), {})
+cli_entry.main = lambda *a, **kw: 0
+worker_server.main()
+"""
+    snapshot_script = """from pathlib import Path
+from local_tts_renderer.sources import load_source
+from local_tts_renderer.worker_snapshot import save_snapshot
+print(save_snapshot(Path('snapshots'), load_source(Path('book.md').resolve())))
+"""
+    snapshot = subprocess.check_output([str(python), '-c', snapshot_script], cwd=tmp_path, env=env, text=True).strip()
+    payload = ''.join(json.dumps(dict(command='render', job_id=str(i), attempt=1,
+                      snapshot=snapshot, argv=['--input', 'book.md', '--out', 'audio'])) + '\n' for i in range(2))
+    result = subprocess.run([str(python), '-c', protocol_script], input=payload, cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert [e['returncode'] for e in events if e['event']=='result'] == [0, 0]
+    assert [e.get('reused', False) for e in events if e['event']=='ready'] == [False, True]
     metadata = subprocess.check_output([str(python), '-c', 'from importlib.metadata import requires; print("\\n".join(requires("local-tts-renderer")))'], cwd=tmp_path, env=env, text=True)
     assert 'kokoro-onnx==0.4.7' in metadata
     assert 'onnxruntime-gpu==1.24.4' in metadata

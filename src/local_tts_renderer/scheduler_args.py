@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local TTS jobs with 2 GPU workers and 1 CPU worker.")
     parser.add_argument("--input", nargs="+", required=True, help="Input files, directories, or glob patterns.")
     parser.add_argument("--output-dir", "--out", dest="output_dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated output.")
+    parser.add_argument("--worker-mode", choices=["persistent", "subprocess"], default="persistent", help="Reuse a model session or start a process for each task.")
     parser.add_argument("--voice", default=DEFAULT_VOICE)
     parser.add_argument("--speed", type=float, default=DEFAULT_SPEED)
     parser.add_argument("--job-max-chars", type=nonnegative_int, default=DEFAULT_JOB_MAX_CHARS, help="Target characters per worker task; split at paragraphs or sentences, never inside a sentence. 0 disables.")
@@ -114,7 +115,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-text", default=DEFAULT_WARMUP_TEXT, help="Short warmup text passed to worker runtime initialization.")
     parser.add_argument("--gpu-recovery-seconds", type=float, default=DEFAULT_GPU_RECOVERY_SECONDS, help="Cooldown for GPU worker after CUDA/timeout failure to let VRAM recover.")
     parser.add_argument("--aggressive-gpu-recovery", action="store_true", default=DEFAULT_AGGRESSIVE_GPU_RECOVERY, help="Stronger GPU recovery strategy after CUDA/timeout failures.")
-    parser.add_argument("--max-parts-per-run", type=int, default=DEFAULT_MAX_PARTS_PER_RUN, help="Optional: restart worker process after closing N parts (0 disables).")
+    parser.add_argument("--max-parts-per-run", type=int, default=DEFAULT_MAX_PARTS_PER_RUN, help="Stop a task after N parts and continue from its checkpoint (0 disables).")
     parser.add_argument("--no-console-controls", action="store_true", default=DEFAULT_NO_CONSOLE_CONTROLS, help="Disable keyboard controls (pause/restart) during batch run.")
     parser.add_argument("--debug", action="store_true", default=DEFAULT_DEBUG, help="Enable verbose batch debug logs.")
     parser.add_argument(

@@ -12,6 +12,7 @@ from pathlib import Path
 from .document_helpers import slugify
 from .scheduler_failures import summarize_job_failure, print_final_job_failure
 from .scheduler_progress import ProgressWatchdog
+from .worker_client import persistent_lifecycle
 
 from .scheduler_jobs import (
     build_worker_command,
@@ -57,6 +58,7 @@ def _resolve_retry_route(
     return worker.provider, False
 
 
+@persistent_lifecycle
 def run_worker(
     worker: WorkerConfig,
     pending_jobs: list[ChapterJob],
@@ -73,6 +75,7 @@ def run_worker(
     worker_temp_dirs: dict[str, Path],
     chapter_cache_map: dict[Path, Path],
     gpu_bootstrap_lock,
+    persistent_client=None,
 ) -> None:
     stop_event = getattr(args, "_scheduler_stop", None)
     while True:
@@ -132,7 +135,8 @@ def run_worker(
         env["PYTHONUTF8"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
         worker_tmp = worker_temp_dirs[worker.name]
-        clear_directory_contents(worker_tmp)
+        if persistent_client is None or not persistent_client.alive:
+            clear_directory_contents(worker_tmp)
         worker_tmp.mkdir(parents=True, exist_ok=True)
         env["TMPDIR"] = str(worker_tmp)
         env["TEMP"] = str(worker_tmp)
@@ -142,7 +146,7 @@ def run_worker(
             env["LOCAL_TTS_DEBUG"] = "1"
         bootstrap_lock_acquired = False
         should_serialize_bootstrap = args.serialize_gpu_bootstrap and worker.provider != "CPUExecutionProvider"
-        if should_serialize_bootstrap:
+        if should_serialize_bootstrap and (persistent_client is None or not persistent_client.alive):
             print(f"[batch:bootstrap-lock] worker={worker.name} waiting", flush=True)
             gpu_bootstrap_lock.acquire()
             bootstrap_lock_acquired = True
@@ -178,7 +182,7 @@ def run_worker(
         process = None
         saw_cuda_error = False
         timed_out = False
-        worker_phase = "spawn"
+        worker_phase = "bootstrap_spawn" if persistent_client and not persistent_client.alive else "spawn"
         try:
             with job_log.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps({"ts": timestamp(), "worker": worker.name, "provider": worker.provider, "attempt": job.attempt, "max_chars": worker_max_chars, "trim_mode": args.trim_mode, "command": command}, ensure_ascii=False) + "\n")
@@ -190,7 +194,8 @@ def run_worker(
                         statuses[worker.name] = WorkerStatus()
                         scheduler_condition.notify_all()
                         return
-                    process = subprocess.Popen(
+                    spawn = subprocess.Popen if persistent_client is None else lambda cmd, **kw: persistent_client.submit(cmd, job, **kw)
+                    process = spawn(
                         command,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
@@ -202,7 +207,8 @@ def run_worker(
                         bufsize=1,
                         start_new_session=(os.name != "nt"),
                     )
-                    register_process(worker.name, process)
+                    if persistent_client is None:
+                        register_process(worker.name, process)
                 assert process.stdout is not None
                 output_queue: queue.Queue[str | None] = queue.Queue()
                 reader_thread = start_stdout_reader(process.stdout, output_queue)
@@ -294,8 +300,9 @@ def run_worker(
                         break
                     if line == "":
                         continue
-                    worker_phase = update_worker_phase(worker_phase, line)
-                    if bootstrap_lock_acquired and worker_phase in {"chapter_load", "render"}:
+                    next_phase = update_worker_phase(worker_phase, line)
+                    worker_phase = "chapter_load" if persistent_client and process.ready and is_bootstrap_phase(next_phase) else next_phase
+                    if bootstrap_lock_acquired and (getattr(process, "ready", False) if persistent_client else worker_phase in {"chapter_load", "render"}):
                         gpu_bootstrap_lock.release()
                         bootstrap_lock_acquired = False
                         print(f"[batch:bootstrap-lock] worker={worker.name} released phase={worker_phase}", flush=True)
@@ -375,8 +382,11 @@ def run_worker(
                 gpu_bootstrap_lock.release()
                 bootstrap_lock_acquired = False
                 print(f"[batch:bootstrap-lock] worker={worker.name} released phase={worker_phase}", flush=True)
-            unregister_process(worker.name)
+            if persistent_client is None:
+                unregister_process(worker.name)
         return_code = process.returncode if (process is not None and process.returncode is not None) else -9
+        if persistent_client and (return_code not in (0, 75) or timed_out or saw_cuda_error):
+            persistent_client.close()
         debug_log(
             args.debug,
             f"worker_finish worker={worker.name} chapter={job.chapter_index} attempt={job.attempt} "

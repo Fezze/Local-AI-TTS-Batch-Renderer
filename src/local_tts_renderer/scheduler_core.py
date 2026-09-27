@@ -43,6 +43,7 @@ def main() -> int:
     print(
         "[batch:config] "
         f"gpu_workers={args.gpu_workers} cpu_workers={args.cpu_workers} "
+        f"worker_mode={getattr(args, 'worker_mode', 'subprocess')} "
         f"max_retries={args.max_retries} silence_timeout={args.worker_silence_timeout_seconds}s "
         f"bootstrap_timeout={args.bootstrap_silence_timeout_seconds}s "
         f"trim_mode={args.trim_mode} mp3_only={args.mp3_only} warmup={'on' if bool(args.warmup_text.strip()) else 'off'} "
@@ -96,6 +97,7 @@ def main() -> int:
             "chapter_jobs": len(chapter_jobs),
             "skipped_completed_jobs": len(skipped_jobs),
             "workers": [worker.__dict__ for worker in workers],
+            "worker_mode": getattr(args, "worker_mode", "subprocess"),
         },
     )
     if skipped_jobs:

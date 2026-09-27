@@ -48,13 +48,16 @@ def _owned_stem(stem: str, final_stem_override: str) -> bool:
     normalized = sanitize_filename_component(final_stem_override)
     if stem in {final_stem_override, normalized}:
         return True
-    chapter_match = re.match(r"^(\d+)\s*-\s*(.+)$", normalized)
-    if chapter_match:
-        chapter_number, title = chapter_match.groups()
-        if re.fullmatch(rf"{re.escape(chapter_number)}-\d+ - {re.escape(title.strip())}", stem):
+    # The writer preserves spaced hyphens in the first part and uses compact
+    # hyphens in subsequent numbered parts. Accept exactly those two forms.
+    for variant in (normalized, re.sub(r"\s*-\s*", "-", normalized).strip()):
+        chapter_match = re.match(r"^(\d+)\s*-\s*(.+)$", variant)
+        if chapter_match:
+            chapter_number, title = chapter_match.groups()
+            if re.fullmatch(rf"{re.escape(chapter_number)}-\d+ - {re.escape(title.strip())}", stem):
+                return True
+        elif re.fullmatch(rf"\d+-{re.escape(variant)}", stem):
             return True
-    elif re.fullmatch(rf"\d+-{re.escape(normalized)}", stem):
-        return True
     return bool(re.fullmatch(rf"\d+-tmp-{re.escape(normalized)}-part-\d+", stem))
 
 

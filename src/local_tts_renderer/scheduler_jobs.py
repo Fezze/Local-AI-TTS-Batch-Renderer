@@ -27,6 +27,7 @@ from .defaults import (
     DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS,
 )
 from .scheduler_logging import debug_log
+from .worker_snapshot import save_snapshot
 from .scheduler_completion import CompletionCache, is_job_complete
 from .scheduler_scan import build_jobs_for_source, load_document_for_jobs
 from .input_paths import source_cache_key, validate_source_outputs
@@ -151,6 +152,7 @@ def build_jobs(
         if chapters is not document.chapters:
             document = SourceDocument(path=document.path, metadata=document.metadata, chapters=chapters, navigation=document.navigation)
         preserve_work_plan(output_dir, source_path, chapters, job_max_chars)
+        snapshot = save_snapshot(output_dir, document)
         cache_key = source_cache_key(source_path)
         cache_path = cache_root / f"{cache_key}.json"
         cache_payload = [
@@ -218,6 +220,7 @@ def build_jobs(
             estimated_chunks = max(1, (len(chapter.text) + effective_max_chars - 1) // effective_max_chars)
             job = ChapterJob(
                 source_path=source_path,
+                document_snapshot=str(snapshot),
                 chapter_index=chapter_index,
                 chapter_title=chapter.title,
                 output_subdir=str(output_subdir),

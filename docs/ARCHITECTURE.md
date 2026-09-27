@@ -34,6 +34,9 @@ CLI and scheduler code must not branch on individual file extensions.
 | Chunking and rendering | `cli_chunking_utils.py`, `cli_audio_utils.py`, `cli_part_writer.py`, `cli_render_flow.py` |
 | Resume state and scoped cleanup | `cli_resume.py`, `cli_render_cleanup.py` |
 | Batch arguments, scan cache and planning | `scheduler_args.py`, `scheduler_scan.py`, `scheduler_completion.py`, `scheduler_jobs.py`, `scheduler_setup.py` |
+| Persistent task transport and server | `worker_client.py`, `worker_server.py` |
+| Persistent phonemizer reuse | `worker_tokenizer.py` |
+| Immutable worker documents and memory metrics | `worker_snapshot.py`, `worker_metrics.py` |
 | Batch worker lifecycle | `scheduler_runtime.py`, `scheduler_process.py`, `scheduler_logging.py` |
 | Worker progress deadline and failure presentation | `scheduler_progress.py`, `scheduler_failures.py` |
 | Composition root | `scheduler_core.py` |
@@ -131,6 +134,35 @@ should import from the owning module rather than a compatibility facade.
   workers waiting for GPU bootstrap also check the stop request before spawning.
   Worker threads finish before temporary directories are removed. Forced termination
   only guarantees access to checkpoints already written.
+- Persistent sessions live inside individual worker processes; no session is shared
+  across providers or scheduler threads. `cli_entry.initialize_session` is separate
+  from task execution; both worker modes call the same renderer.
+- Persistent workers reuse one eSpeak backend for the current language. Repeated
+  high-level phonemizer calls otherwise load additional native library copies.
+  The adapter preserves Kokoro normalization, vocabulary filtering, punctuation,
+  stress, line handling and separators; a real-backend regression compares phonemes.
+  No allocator, model, provider or inference precision settings are changed.
+- The private worker module reads JSON Lines commands on stdin. Render commands carry
+  `job_id`, `attempt`, CLI arguments and the document snapshot path; `shutdown` closes
+  an idle worker. Stdout is reserved for `ready`, `progress`, `result`, and `error`
+  events with matching job/attempt identity. Native stdout and ordinary Python logs
+  go to stderr, which is drained independently. A malformed or mismatched event
+  invalidates the session.
+- Content-addressed document snapshots include source path, metadata, chapters and
+  navigation. Their digest is verified on load. Workers retain only the last loaded
+  document, and never reparse a source for another segment from that snapshot.
+  Chapter cache and manifest/checkpoint formats remain unchanged.
+- Each task has a finite transport stream and a fresh progress watchdog. Idle
+  persistent processes stay registered for shutdown. GPU bootstrap serialization
+  ends at `ready`; bootstrap silence and active-task deadlines remain separate.
+  Failures and timeouts discard the session before the existing retry policy runs.
+  Partial completion (75) may continue in the same healthy session.
+- Numbered audio part ownership recognizes both spaced and compact hyphen forms
+  already emitted by the writer; this preserves filenames and safe partial-run
+  continuation without granting ownership of neighboring segment names.
+- Mode promotion is gated by full regressions and a lower median real-inference
+  benchmark time. The subprocess mode stays available for diagnostics. Timing and
+  sampled memory measurements do not change render settings or chunk boundaries.
 - Future formats and TTS models must first define a tested contract; they should
   not expand existing orchestration modules with new branches.
 

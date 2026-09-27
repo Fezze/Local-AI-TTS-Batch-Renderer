@@ -1,0 +1,161 @@
+{
+  "date": "2026-09-23",
+  "gpu": "NVIDIA GeForce RTX 5070 (12 GiB)",
+  "cpu": "AMD Ryzen 7 7700X 8-Core Processor",
+  "python": "3.12.13",
+  "packages": {
+    "kokoro-onnx": "0.4.7",
+    "onnxruntime-gpu": "1.24.4",
+    "phonemizer-fork": "3.3.1",
+    "numpy": "2.5.1"
+  },
+  "workload": {
+    "source": "Eric — Terry Pratchett",
+    "segments": 6,
+    "target_chars": 2000,
+    "workers": {
+      "CUDAExecutionProvider": 2,
+      "CPUExecutionProvider": 1
+    },
+    "fixed_tasks_per_worker": 2,
+    "audio_seconds": 734.05
+  },
+  "runs": [
+    {
+      "mode": "subprocess",
+      "seconds": 48.816017816999874,
+      "audio_seconds": 734.05,
+      "rtf": 0.06650230613309703,
+      "peak_ram_bytes": 5026525184,
+      "peak_vram_bytes": 2569011200,
+      "session_providers": [
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "mode": "persistent",
+      "seconds": 45.679406840999945,
+      "audio_seconds": 734.05,
+      "rtf": 0.06222928525441039,
+      "peak_ram_bytes": 4990812160,
+      "peak_vram_bytes": 2569011200,
+      "session_providers": [
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "mode": "persistent",
+      "seconds": 46.645071744000006,
+      "audio_seconds": 734.05,
+      "rtf": 0.06354481539949595,
+      "peak_ram_bytes": 4997160960,
+      "peak_vram_bytes": 2564816896,
+      "session_providers": [
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "mode": "subprocess",
+      "seconds": 49.77878084099984,
+      "audio_seconds": 734.05,
+      "rtf": 0.06781388303385306,
+      "peak_ram_bytes": 4941484032,
+      "peak_vram_bytes": 2575302656,
+      "session_providers": [
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "mode": "subprocess",
+      "seconds": 49.869118325000045,
+      "audio_seconds": 734.05,
+      "rtf": 0.06793695024180921,
+      "peak_ram_bytes": 4995305472,
+      "peak_vram_bytes": 2571108352,
+      "session_providers": [
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "mode": "persistent",
+      "seconds": 46.80128721999995,
+      "audio_seconds": 734.05,
+      "rtf": 0.06375762852666705,
+      "peak_ram_bytes": 4982702080,
+      "peak_vram_bytes": 2569011200,
+      "session_providers": [
+        "CUDAExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    }
+  ],
+  "median_seconds": {
+    "subprocess": 49.77878084099984,
+    "persistent": 46.645071744000006
+  },
+  "elapsed_reduction_percent": 6.2952708846151335,
+  "validation": {
+    "identical_manifest_text": true,
+    "identical_task_audio_durations": true,
+    "all_mp3s_decoded": true,
+    "manifest_text_sha256": "eac3e12935c29b293bb91115db8933fa40cca82587c69f606775eb9d6ec4eaec"
+  },
+  "memory_soak": {
+    "tasks": 18,
+    "sessions": 3,
+    "seconds": 129.999328547,
+    "audio_seconds": 2202.15,
+    "rss_after_tasks_mib": {
+      "cpu-1": [
+        1335.293,
+        2110.785,
+        2110.797,
+        2177.785,
+        2262.629,
+        2262.633
+      ],
+      "gpu-2": [
+        1623.793,
+        1658.457,
+        1659.523,
+        1700.863,
+        1700.887,
+        1700.891
+      ],
+      "gpu-1": [
+        1722.281,
+        1755.34,
+        1755.355,
+        1765.105,
+        1765.129,
+        1765.137
+      ]
+    }
+  },
+  "notes": [
+    "RAM is summed process RSS, including shared pages.",
+    "Peak RAM/VRAM sampled once per second; short peaks can be missed.",
+    "Synthetic regression tests are separate from these real CUDA/CPU measurements.",
+    "Native Windows GPU inference was not tested."
+  ]
+}

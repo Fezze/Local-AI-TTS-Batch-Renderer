@@ -43,6 +43,7 @@ class ChapterJob:
     text_end: int | None = None
     segment_index: int = 1
     segment_count: int = 1
+    document_snapshot: str | None = None
 
 
 @dataclass

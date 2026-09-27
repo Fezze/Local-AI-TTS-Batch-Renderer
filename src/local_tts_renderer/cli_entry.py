@@ -91,10 +91,52 @@ def _group_directory_map_for_source(document: SourceDocument) -> dict[str, Path]
     return build_group_directory_map(document.chapters)
 
 
-def main() -> int:
-    if hasattr(signal, "SIGTERM"):
+def initialize_session(args, output_dir):
+    initialized_at = time.monotonic()
+    runtime_temp_dir = configure_runtime_temp_dir(output_dir=output_dir, temp_dir=args.temp_dir)
+    enable_windows_espeak_fallback()
+    model_dir = Path(args.model_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_path, voices_path = ensure_model_files(model_dir)
+    model_identity = {
+        "model": {"name": model_path.name, "size": model_path.stat().st_size},
+        "voices": {"name": voices_path.name, "size": voices_path.stat().st_size},
+    }
+    provider_priority = parse_provider_priority(args.providers)
+    provider = configure_onnx_provider(provider_priority=provider_priority)
+    ort = get_onnxruntime()
+    print(json.dumps({"onnx_provider_preference": provider, "available_providers": ort.get_available_providers(), "runtime_temp_dir": str(runtime_temp_dir)}), flush=True)
+    KokoroClass = get_kokoro_class()
+    print("[run:bootstrap] creating kokoro session...", flush=True)
+    kokoro = KokoroClass(str(model_path), str(voices_path))
+    if getattr(args, "_persistent_worker", False):
+        from .worker_tokenizer import reuse_phonemizer
+        reuse_phonemizer(kokoro)
+    print(json.dumps({"session_providers": kokoro.sess.get_providers()}), flush=True)
+    if args.warmup_text and args.warmup_text.strip():
+        print("[run:warmup] start", flush=True)
+        warmup_start = time.time()
+        try:
+            create_audio_with_retry(
+                kokoro=kokoro,
+                text=args.warmup_text.strip(),
+                voice=args.voice,
+                speed=args.speed,
+                lang=args.lang,
+                trim_mode=args.trim_mode,
+            )
+            print(f"[run:warmup] done elapsed={time.time() - warmup_start:.2f}s", flush=True)
+        except Exception as exc:
+            print(f"[run:warmup] failed error={exc}", flush=True)
+
+    print(json.dumps({"event": "session_metrics", "initialization_seconds": time.monotonic() - initialized_at}), flush=True)
+    return kokoro, model_identity
+
+
+def main(args=None, *, runtime=None, source_document=None) -> int:
+    if runtime is None and hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _interrupt_on_termination)
-    args = parse_args()
+    args = parse_args() if args is None else args
     md_single_chapter = getattr(args, "md_single_chapter", False)
     max_chapter_chars = getattr(args, "max_chapter_chars", 0)
     md_chapter_heading_level = getattr(args, "md_chapter_heading_level", 0)
@@ -160,42 +202,14 @@ def main() -> int:
         f"trim_mode={args.trim_mode} mp3_only={args.mp3_only} force={args.force}",
         flush=True,
     )
-    runtime_temp_dir = configure_runtime_temp_dir(output_dir=output_dir, temp_dir=args.temp_dir)
-    enable_windows_espeak_fallback()
-    model_dir = Path(args.model_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    model_path, voices_path = ensure_model_files(model_dir)
-    model_identity = {
-        "model": {"name": model_path.name, "size": model_path.stat().st_size},
-        "voices": {"name": voices_path.name, "size": voices_path.stat().st_size},
-    }
-    provider_priority = parse_provider_priority(args.providers)
-    provider = configure_onnx_provider(provider_priority=provider_priority)
-    ort = get_onnxruntime()
-    print(json.dumps({"onnx_provider_preference": provider, "available_providers": ort.get_available_providers(), "runtime_temp_dir": str(runtime_temp_dir)}), flush=True)
-    KokoroClass = get_kokoro_class()
-    print("[run:bootstrap] creating kokoro session...", flush=True)
-    kokoro = KokoroClass(str(model_path), str(voices_path))
-    print(json.dumps({"session_providers": kokoro.sess.get_providers()}), flush=True)
-    if args.warmup_text and args.warmup_text.strip():
-        print("[run:warmup] start", flush=True)
-        warmup_start = time.time()
-        try:
-            create_audio_with_retry(
-                kokoro=kokoro,
-                text=args.warmup_text.strip(),
-                voice=args.voice,
-                speed=args.speed,
-                lang=args.lang,
-                trim_mode=args.trim_mode,
-            )
-            print(f"[run:warmup] done elapsed={time.time() - warmup_start:.2f}s", flush=True)
-        except Exception as exc:
-            print(f"[run:warmup] failed error={exc}", flush=True)
+    kokoro, model_identity = runtime if runtime is not None else initialize_session(args, output_dir)
 
     for source_path in inputs:
-        document = _load_document_for_source(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
-        if args.chapter_cache and args.chapter_index is not None:
+        prepared_at = time.monotonic()
+        document = source_document or _load_document_for_source(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
+        if source_document is not None:
+            chapters = document.chapters
+        elif args.chapter_cache and args.chapter_index is not None:
             cache_path = Path(args.chapter_cache).resolve()
             if cache_path.exists():
                 chapters = load_chapters_from_cache(cache_path)
@@ -211,6 +225,7 @@ def main() -> int:
 
         if chapters is not document.chapters:
             document = SourceDocument(path=document.path, metadata=document.metadata, chapters=chapters, navigation=document.navigation)
+        print(json.dumps({"event": "document_metrics", "preparation_seconds": time.monotonic() - prepared_at}), flush=True)
         audio_metadata = _audio_metadata_from_source(document)
         group_dir_map = _group_directory_map_for_source(document)
 

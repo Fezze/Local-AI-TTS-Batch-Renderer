@@ -100,6 +100,70 @@ an increasing completed count does. The limit also applies while publishing audi
 parts, so allow enough time for slow encoding. Existing silence and bootstrap
 limits remain separate. Timeout logs distinguish `no_progress` from `silence`.
 
+## Persistent model sessions
+
+`--worker-mode persistent` (the default) keeps one Python process and one model session per worker.
+The model and warmup run once; subsequent segments reuse the session and the
+eSpeak phonemization backend, avoiding repeated native-library loads. Each worker
+runs one task at a time. GPU/CPU worker counts, text boundaries, audio settings and
+output names are the same in both modes. Use `--worker-mode subprocess` to launch
+a separate process for each task.
+
+```bash
+bash scripts/start-batch.sh --input book.epub --gpu-workers 2 --cpu-workers 1 --worker-mode persistent
+```
+
+Persistent workers read a content-addressed document snapshot prepared by the batch
+scan, including metadata and navigation, and retain only the latest document in
+memory. The existing chapter cache remains available. A failed session is discarded;
+retry starts a new process and resumes the task's validated checkpoint. Idle sessions
+do not trigger progress timeouts. Interrupting a batch also closes idle sessions.
+Sessions retain model memory while idle, until their worker thread exits.
+
+Worker logs include initialization and document-preparation timings. Persistent
+result events also include task time and current RSS on Linux. To compare modes
+with fixed assignments (two tasks per worker, two CUDA workers and one CPU worker):
+
+```bash
+PYTHONPATH=src ./.venv/bin/python scripts/benchmark_workers.py --input book.epub --output /tmp/tts-benchmark --repeats 3
+```
+
+The benchmark requires CUDA, `nvidia-smi`, and `ffmpeg`; memory sampling uses Linux
+`/proc`. Choose a new output directory. It selects six naturally delimited segments
+of about 2000 characters, alternates mode order, validates actual session providers,
+compares manifest text and decodes every MP3. `results.json` contains elapsed time,
+audio duration, RTF (render time / audio duration), sampled peak worker RAM/VRAM and
+session/task metrics. Sampling once per second can miss short memory peaks. Run it
+without other rendering or test workloads. Add `--soak-repeats 3` to run six
+tasks per persistent session and record RSS after each task in
+`memory-soak/measurement.json`. These are real inference measurements;
+synthetic-audio regression tests validate behavior separately.
+
+Measured on 2026-09-23 with two CUDA workers sharing an RTX 5070 and one CPU
+worker, using six segments of *Eric* and three runs per mode:
+
+| Mode | Run times (s) | Median (s) | Highest sampled RAM (GiB) | Highest sampled VRAM (GiB) |
+| --- | --- | --- | --- | --- |
+| subprocess | 48.82 / 49.78 / 49.87 | 49.78 | 4.68 | 2.40 |
+| persistent | 45.68 / 46.65 / 46.80 | 46.65 | 4.65 | 2.39 |
+
+Each run produced 734.05 seconds of audio with identical manifest text and audio
+part durations; every MP3 decoded successfully. Persistent mode reduced median
+elapsed time by **6.3%**, with three model initializations instead of six. RAM is
+summed worker RSS, including shared pages; VRAM is summed per-process allocation.
+
+An additional 18-task run reused each session for six tasks. RSS rose while ONNX
+allocators warmed up, then stabilized for repeated inputs: the final two tasks
+changed each worker's RSS by less than 0.02 MiB. Final RSS was about 1765/1701 MiB
+for the GPU workers and 2263 MiB for CPU. Session buffers remain allocated until
+worker exit; other input shapes can change memory requirements. Phoneme equality
+and native library reuse also have real eSpeak regression coverage.
+
+The measured improvement and passing regressions enable persistent mode by default.
+The subprocess mode remains available for workload-specific comparisons. See the
+[measurement summary](docs/benchmarks/persistent-workers-2026-09-23.json) for exact
+values, hardware, package versions and per-task memory observations.
+
 ## Chapters, worker tasks and audio files
 
 EPUB reading order comes from the spine, while logical sections come from EPUB 3
