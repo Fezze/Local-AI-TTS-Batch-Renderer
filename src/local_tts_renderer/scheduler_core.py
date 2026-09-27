@@ -48,6 +48,8 @@ def main() -> int:
         f"bootstrap_timeout={args.bootstrap_silence_timeout_seconds}s "
         f"trim_mode={args.trim_mode} mp3_only={args.mp3_only} warmup={'on' if bool(args.warmup_text.strip()) else 'off'} "
         f"max_parts_per_run={args.max_parts_per_run} "
+        f"job_max_chars={getattr(args, 'job_max_chars', None) if getattr(args, 'job_max_chars', None) is not None else 'auto'} "
+        f"target_minutes={args.max_part_minutes} "
         f"gpu_recovery={args.gpu_recovery_seconds}s aggressive_recovery={args.aggressive_gpu_recovery} "
         f"serialize_gpu_bootstrap={args.serialize_gpu_bootstrap} "
         f"console_controls={'off' if args.no_console_controls else 'on'}",
@@ -63,7 +65,8 @@ def main() -> int:
             md_single_chapter=getattr(args, "md_single_chapter", False),
             max_chapter_chars=getattr(args, "max_chapter_chars", 0),
             md_chapter_heading_level=getattr(args, "md_chapter_heading_level", 0),
-            job_max_chars=getattr(args, "job_max_chars", 12000),
+            job_max_chars=getattr(args, "job_max_chars", None),
+            max_part_minutes=args.max_part_minutes, speed=args.speed, silence_ms=args.silence_ms,
             max_chars=args.max_chars,
             max_phoneme_chars=getattr(args, "max_phoneme_chars", 0),
         )

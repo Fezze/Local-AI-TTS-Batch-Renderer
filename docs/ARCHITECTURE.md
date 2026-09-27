@@ -118,19 +118,36 @@ should import from the owning module rather than a compatibility facade.
 - A SourceChapter represents logical content. A ChapterJob may select an exact
   [text_start, text_end) range of that chapter; it never invents a source chapter.
   Workers receive these offsets alongside the original chapter index and cache.
-- Batch task sizing is independent of inference chunks and audio duration limits.
-  Character-based task segmentation is disabled by default (target 0), leaving
-  output splitting to the actual audio duration (30 minutes by default, closing
-  after a complete inference chunk). Chapter endings may produce shorter files.
-  Explicit positive character targets prefer paragraphs, then sentence boundaries;
-  overlong sentences remain intact and headings stay with following text. All ranges
-  concatenate exactly to the original chapter. Bounded segments are CPU-eligible
-  while GPU workers are active.
-- Segment ordinals determine output and log identity independently of completion
+- Batch task sizing defaults to automatic duration estimation (`job_max_chars=None`).
+  `duration_planning.py` estimates cumulative word time at 190 WPM scaled by speed,
+  plus inter-chunk silence. This calibration is based on actual af_bella output
+  at speed 0.9 (roughly 169 WPM); the previous 150 WPM baseline yielded parts
+  around 24 minutes. There is no reference-file option or automatic history scan. Natural boundaries near the target (default 30 minutes,
+  +/-10%) define tasks before workers start; all text ranges concatenate exactly
+  to the original chapter. Headings stay with following text. This heuristic is
+  not a guarantee of exact durations for unseen text.
+- Automatic jobs carry an output duration cap of target * 1.1 to avoid small
+  estimation overruns creating short extra parts. The renderer still closes at
+  a complete inference-chunk boundary. Short chapters/tails remain shorter.
+  Automatic multi-segment tasks are eligible for CPU workers regardless of the
+  whole-chapter CPU character budget, allowing GPU and CPU workers to cooperate.
+- Explicit positive character targets retain paragraph/sentence splitting and the
+  original audio limit. Explicit zero disables task splitting. Inference chunks
+  remain independent. Unsplit manual plans retain their signature format. Split plans use signature
+  version 2 to prevent mixing legacy segment suffixes with standard part names.
+- Planned part ordinals use the standard chapter/part name (`04-01 - Title`).
+  Actual duration overflow adds a numeric child level (`04-01-02 - Title`),
+  preserving order and ownership without renumbering concurrently written files.
+  `part_naming.py` is shared by planning, audio paths and cleanup.
+- Part ordinals determine output and log identity independently of completion
   order. Checkpoints fingerprint the selected text; retries keep the same range and
   chunk size. An existing unsplit checkpoint keeps its original task identity.
 - A saved source/work-size signature rejects incompatible plans before rendering.
-  Changing source content or --job-max-chars requires a new output directory.
+  Automatic signatures also include estimator version, duration, speed, pauses,
+  planning chunk size, calibrated rate and tolerance. Boundaries are deterministic and never
+  retuned mid-run from observed durations; worker count does not affect them.
+  Changing source content, task mode or automatic planning settings requires a new
+  output directory.
   --fresh discards rendering progress without changing that plan.
 - Batch interruption stops queue selection and retries before terminating workers.
   Process creation/registration and the stop request share the scheduler lock;

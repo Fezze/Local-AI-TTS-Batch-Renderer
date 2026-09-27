@@ -16,6 +16,7 @@ try:
 except ModuleNotFoundError:
     _lameenc = None
 
+from .part_naming import numbered_part_stem, split_numbered_title
 from .cli_chunking_utils import split_text_for_retry
 from .cli_models import AudioMetadata
 from .document_helpers import get_group_leaf_title, sanitize_filename_component
@@ -163,21 +164,15 @@ def compute_part_output_paths(
     mp3_dir = base_output_dir / "mp3" / relative_root
 
     if not multi_part and part_index == 1:
-        if force_numbered_first_part and final_stem_override:
-            normalized = sanitize_filename_component(final_stem_override)
-            chapter_match = re.match(r"^(\d+)\s*-\s*(.+)$", normalized)
-            if chapter_match:
-                chapter_no, chapter_rest = chapter_match.groups()
-                chapter_part_name = f"{chapter_no}-01 - {chapter_rest.strip()}"
-                return wav_dir / f"{chapter_part_name}.wav", mp3_dir / f"{chapter_part_name}.mp3"
+        if force_numbered_first_part and final_stem_override and split_numbered_title(final_stem_override):
+            chapter_part_name = numbered_part_stem(final_stem_override, 1)
+            return wav_dir / f"{chapter_part_name}.wav", mp3_dir / f"{chapter_part_name}.mp3"
         final_name = final_stem_override or (relative_root.name if group_name is None else base_name)
         return wav_dir / f"{final_name}.wav", mp3_dir / f"{final_name}.mp3"
-    if final_stem_override and normalize_stem(base_name) == normalize_stem(final_stem_override):
-        chapter_match = re.match(r"^(\d+)\s*-\s*(.+)$", normalize_stem(base_name))
-        if chapter_match:
-            chapter_no, chapter_rest = chapter_match.groups()
-            chapter_part_name = f"{chapter_no}-{part_index:02d} - {chapter_rest.strip()}"
-            return wav_dir / f"{chapter_part_name}.wav", mp3_dir / f"{chapter_part_name}.mp3"
+    if (final_stem_override and normalize_stem(base_name) == normalize_stem(final_stem_override)
+            and split_numbered_title(final_stem_override)):
+        chapter_part_name = numbered_part_stem(final_stem_override, part_index)
+        return wav_dir / f"{chapter_part_name}.wav", mp3_dir / f"{chapter_part_name}.mp3"
     return wav_dir / f"{part_index:02d}-{base_name}.wav", mp3_dir / f"{part_index:02d}-{base_name}.mp3"
 
 

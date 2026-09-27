@@ -49,6 +49,10 @@ def nonnegative_int(value: str) -> int:
     return number
 
 
+def job_size(value: str) -> int | None:
+    return None if value.lower() == 'auto' else nonnegative_int(value)
+
+
 def nonnegative_seconds(value: str) -> float:
     seconds = float(value)
     if not math.isfinite(seconds) or seconds < 0:
@@ -63,10 +67,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--worker-mode", choices=["persistent", "subprocess"], default="persistent", help="Reuse a model session or start a process for each task.")
     parser.add_argument("--voice", default=DEFAULT_VOICE)
     parser.add_argument("--speed", type=float, default=DEFAULT_SPEED)
-    parser.add_argument("--job-max-chars", type=nonnegative_int, default=DEFAULT_JOB_MAX_CHARS, help="Target characters per worker task; split at paragraphs or sentences, never inside a sentence. 0 disables (default); audio parts use --max-part-minutes.")
+    parser.add_argument("--job-max-chars", type=job_size, default=DEFAULT_JOB_MAX_CHARS, help="auto (default) estimates tasks from --max-part-minutes and --speed; positive integers use characters; 0 disables task splitting.")
     parser.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
     parser.add_argument("--max-phoneme-chars", type=int, default=DEFAULT_MAX_PHONEME_CHARS, help="Secondary chunk size cap to avoid phoneme truncation.")
-    parser.add_argument("--max-part-minutes", type=float, default=DEFAULT_MAX_PART_MINUTES)
+    parser.add_argument("--max-part-minutes", type=float, default=DEFAULT_MAX_PART_MINUTES, help="Audio duration target; auto tasks allow 10%% tolerance, explicit character modes use this limit directly.")
     parser.add_argument("--model-dir", default="models")
     parser.add_argument("--silence-ms", type=int, default=DEFAULT_SILENCE_MS)
     parser.add_argument("--force", action="store_true", default=DEFAULT_FORCE)
@@ -88,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-chapter-chars", type=int, default=DEFAULT_MAX_CHAPTER_CHARS, help="Maximum character count per Markdown chapter. 0 disables extra splitting.")
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="Retry failed chapter jobs this many times.")
-    parser.add_argument("--cpu-max-chars", type=int, default=DEFAULT_CPU_MAX_CHARS, help="CPU worker only takes jobs up to this estimated text size while GPUs are available.")
+    parser.add_argument("--cpu-max-chars", type=int, default=DEFAULT_CPU_MAX_CHARS, help="CPU character budget while GPUs are active; automatic duration segments and short sections are also eligible.")
     parser.add_argument("--cpu-worker-max-chars", type=int, default=DEFAULT_CPU_WORKER_MAX_CHARS, help="Chunk size used by CPU worker jobs.")
     parser.add_argument("--gpu-large-chapter-max-chars", type=int, default=DEFAULT_GPU_LARGE_CHAPTER_MAX_CHARS, help="Chunk size used for larger chapters on GPU.")
     parser.add_argument("--gpu-small-chapter-max-chars", type=int, default=DEFAULT_GPU_SMALL_CHAPTER_MAX_CHARS, help="Chunk size used for smaller chapters on GPU.")

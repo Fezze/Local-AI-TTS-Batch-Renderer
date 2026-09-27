@@ -117,21 +117,29 @@ def test_dots_in_chapter_titles_do_not_collapse_segment_paths():
     assert len(set(manifests))==len(tasks)==3
 
 
-def test_default_batch_keeps_long_chapter_and_uses_thirty_minute_parts(tmp_path, monkeypatch):
+def test_default_batch_splits_long_chapter_for_gpu_and_cpu_workers(tmp_path, monkeypatch):
     source = tmp_path / 'book.md'
-    source.write_text('# Chapter\n\n' + 'A complete sentence.\n\n' * 1500)
+    source.write_text('# Chapter\n\n' + 'A complete sentence.\n\n' * 5000)
     monkeypatch.setattr(sys, 'argv', ['batch', '--input', str(source)])
     args = scheduler_args.parse_args()
-    assert args.job_max_chars == 0
+    assert args.job_max_chars is None
     jobs, skipped, caches = build_jobs([source], tmp_path / 'out', False)
-    assert not skipped and len(jobs) == 1
+    assert not skipped and len(jobs) >= 3
+    statuses = {'gpu-1': WorkerStatus(active=True), 'gpu-2': WorkerStatus(active=True)}
+    pending = list(jobs)
+    selected = []
+    for name, provider in [('gpu-1', 'CUDAExecutionProvider'), ('gpu-2', 'CUDAExecutionProvider'),
+                           ('cpu-1', 'CPUExecutionProvider')]:
+        index = select_next_job(pending, WorkerConfig(name, provider), statuses, 12000, False)
+        assert index is not None
+        selected.append(pending.pop(index))
+    assert len({job.output_name for job in selected}) == 3
+    assert {job.chapter_index for job in selected} == {1}
+    assert all(job.estimated_chars > 12000 for job in selected)
     job = jobs[0]
-    assert job.estimated_chars > 24000
-    assert job.text_start == 0 and job.text_end is None
-    assert '-segment-' not in job.output_name
     command = build_worker_command(Path(sys.executable), Path('unused'), args,
                                    source, job, 450, caches[source])
     monkeypatch.setattr(sys, 'argv', ['render', *command[4:]])
     parsed = cli_runtime.parse_args()
-    assert parsed.max_part_minutes == 30
-    assert parsed.chapter_text_start == 0 and parsed.chapter_text_end is None
+    assert parsed.max_part_minutes == 33
+    assert (parsed.chapter_text_start, parsed.chapter_text_end) == (job.text_start, job.text_end)

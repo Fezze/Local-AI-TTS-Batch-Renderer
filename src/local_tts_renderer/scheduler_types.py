@@ -44,6 +44,7 @@ class ChapterJob:
     segment_index: int = 1
     segment_count: int = 1
     document_snapshot: str | None = None
+    output_part_minutes: float | None = None
 
 
 @dataclass

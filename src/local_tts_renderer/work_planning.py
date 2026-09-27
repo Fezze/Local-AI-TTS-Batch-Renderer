@@ -3,16 +3,15 @@ from __future__ import annotations
 from dataclasses import replace
 import re
 
+from .part_naming import numbered_part_stem
 from .scheduler_types import ChapterJob
 from .sources.model import SourceChapter
 
-DEFAULT_JOB_MAX_CHARS = 0
+DEFAULT_JOB_MAX_CHARS = None
 
 
-def natural_text_ranges(text: str, target: int) -> list[tuple[int, int]]:
-    """Partition exactly, preferring paragraphs; never cut inside a sentence."""
-    if target <= 0 or len(text) <= target:
-        return [(0, len(text))]
+def text_boundaries(text: str) -> tuple[list[int], list[int]]:
+    """Return paragraph and conservative sentence endings, preserving whitespace."""
     paragraphs = [match.end() for match in re.finditer(r'\n\s*\n', text)]
     # Preserve punctuation and whitespace in the preceding slice. Conservative
     # sentence starts avoid interpreting decimals and most abbreviations as ends.
@@ -24,6 +23,14 @@ def natural_text_ranges(text: str, target: int) -> list[tuple[int, int]]:
             if token and (len(token[0]) == 1 or token[0].lower() in abbreviations):
                 continue
         sentences.append(match.end())
+    return paragraphs, sentences
+
+
+def natural_text_ranges(text: str, target: int) -> list[tuple[int, int]]:
+    """Partition exactly, preferring paragraphs; never cut inside a sentence."""
+    if target <= 0 or len(text) <= target:
+        return [(0, len(text))]
+    paragraphs, sentences = text_boundaries(text)
     boundaries = sorted(set([*paragraphs, *sentences, len(text)]))
     ranges = []
     start = 0
@@ -51,8 +58,9 @@ def select_chapter_text(chapter: SourceChapter, start: int = 0, end: int | None 
 
 
 def split_chapter_job(job: ChapterJob, chapter: SourceChapter, target: int,
-                      chunk_chars: int) -> list[ChapterJob]:
-    ranges = natural_text_ranges(chapter.text, target)
+                      chunk_chars: int, *, ranges: list[tuple[int, int]] | None = None) -> list[ChapterJob]:
+    if ranges is None:
+        ranges = natural_text_ranges(chapter.text, target)
     if len(ranges) > 1 and chapter.text[:ranges[0][1]].strip() == chapter.title.strip():
         ranges = [(0, ranges[1][1]), *ranges[2:]]
     if len(ranges) == 1:
@@ -61,7 +69,7 @@ def split_chapter_job(job: ChapterJob, chapter: SourceChapter, target: int,
     segment_stem = job.output_name.replace(".", "-")
     return [replace(
         job,
-        output_name=f'{segment_stem}-segment-{index:04d}',
+        output_name=numbered_part_stem(segment_stem, index),
         text_start=start, text_end=end, segment_index=index, segment_count=len(ranges),
         estimated_chars=end-start,
         estimated_chunks=max(1, (end-start+chunk_chars-1)//chunk_chars),

@@ -23,6 +23,9 @@ from .sources import SourceChapter, SourceDocument
 
 from .defaults import (
     DEFAULT_CPU_MAX_CHARS,
+    DEFAULT_MAX_PART_MINUTES,
+    DEFAULT_SPEED,
+    DEFAULT_SILENCE_MS,
     DEFAULT_GPU_LARGE_CHAPTER_ESTIMATED_CHUNKS,
     DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS,
 )
@@ -32,6 +35,7 @@ from .scheduler_completion import CompletionCache, is_job_complete
 from .scheduler_scan import build_jobs_for_source, load_document_for_jobs
 from .input_paths import source_cache_key, validate_source_outputs
 from .work_planning import DEFAULT_JOB_MAX_CHARS, split_chapter_job, select_chapter_text
+from .duration_planning import duration_plan_settings, duration_text_ranges
 from .work_plan_state import preserve_work_plan
 from .scheduler_types import (
     CPU_IDLE_STEP_SECONDS,
@@ -83,10 +87,16 @@ def build_jobs(
     md_single_chapter: bool = False,
     max_chapter_chars: int = 0,
     md_chapter_heading_level: int = 0,
-    job_max_chars: int = DEFAULT_JOB_MAX_CHARS,
+    job_max_chars: int | None = DEFAULT_JOB_MAX_CHARS,
+    max_part_minutes: float = DEFAULT_MAX_PART_MINUTES,
+    speed: float = DEFAULT_SPEED,
+    silence_ms: int = DEFAULT_SILENCE_MS,
     max_chars: int = DEFAULT_MAX_CHARS,
     max_phoneme_chars: int = 0,
 ) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
+    effective_max_chars = min(max_chars, max_phoneme_chars) if max_phoneme_chars > 0 else max_chars
+    duration_settings = (duration_plan_settings(max_part_minutes, speed, silence_ms, effective_max_chars)
+                         if job_max_chars is None else None)
     validate_source_outputs(inputs)
     scan_workers = min(os.cpu_count() or 1, len(inputs))
     if scan_workers > 1:
@@ -107,6 +117,7 @@ def build_jobs(
                 repeat(job_max_chars),
                 repeat(max_chars),
                 repeat(max_phoneme_chars),
+                repeat(max_part_minutes), repeat(speed), repeat(silence_ms),
             )
             results = list(source_results)
         jobs = [job for source_jobs, _, _ in results for job in source_jobs]
@@ -151,7 +162,7 @@ def build_jobs(
         chapters = [chapter for chapter in source_chapters if chapter.text and chapter.text.strip()]
         if chapters is not document.chapters:
             document = SourceDocument(path=document.path, metadata=document.metadata, chapters=chapters, navigation=document.navigation)
-        preserve_work_plan(output_dir, source_path, chapters, job_max_chars)
+        preserve_work_plan(output_dir, source_path, chapters, job_max_chars, duration_settings=duration_settings)
         snapshot = save_snapshot(output_dir, document)
         cache_key = source_cache_key(source_path)
         cache_path = cache_root / f"{cache_key}.json"
@@ -227,6 +238,8 @@ def build_jobs(
                 output_name=output_name,
                 estimated_chars=len(chapter.text),
                 estimated_chunks=estimated_chunks,
+                output_part_minutes=(max_part_minutes * (1 + duration_settings['tolerance'])
+                                     if duration_settings else None),
             )
             complete = is_job_complete(
                 output_dir,
@@ -240,7 +253,9 @@ def build_jobs(
             else:
                 # Keep an existing unsplit checkpoint resumable under its original identity.
                 checkpoint = (output_dir / job.output_subdir / job.output_name).with_suffix(".resume.json")
-                tasks = [job] if checkpoint.exists() else split_chapter_job(job, chapter, job_max_chars, effective_max_chars)
+                ranges = duration_text_ranges(chapter.text, duration_settings) if duration_settings else None
+                tasks = [job] if checkpoint.exists() else split_chapter_job(
+                    job, chapter, job_max_chars or 0, effective_max_chars, ranges=ranges)
                 for task in tasks:
                     selected = select_chapter_text(chapter, task.text_start, task.text_end)
                     task_complete = complete if task is job else is_job_complete(
@@ -325,7 +340,7 @@ def build_worker_command(
         "--max-chars",
         str(worker_max_chars),
         "--max-part-minutes",
-        str(args.max_part_minutes),
+        str(job.output_part_minutes if job.output_part_minutes is not None else args.max_part_minutes),
         "--model-dir",
         str(Path(args.model_dir).resolve()),
         "--silence-ms",
@@ -386,7 +401,8 @@ def select_next_job(
             (index, job)
             for index, job in enumerate(pending_jobs)
             if job.preferred_provider in (None, "CPUExecutionProvider")
-            and (is_short_section_title(job.chapter_title) or (job.estimated_chars <= cpu_max_chars and (job.segment_count > 1 or job.estimated_chunks <= allowed_chunks)))
+            and (is_short_section_title(job.chapter_title) or (job.segment_count > 1 and (job.output_part_minutes is not None or job.estimated_chars <= cpu_max_chars))
+                 or (job.estimated_chars <= cpu_max_chars and job.estimated_chunks <= allowed_chunks))
         ]
         if eligible:
             return min(eligible, key=lambda item: job_key(item[1]))[0]

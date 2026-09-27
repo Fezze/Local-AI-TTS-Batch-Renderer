@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from .defaults import DEFAULT_MAX_PART_MINUTES, DEFAULT_SPEED, DEFAULT_SILENCE_MS
 from .atomic_io import write_json_atomic
 from .input_paths import source_cache_key
 from .scheduler_types import ChapterJob
@@ -127,9 +128,12 @@ def build_jobs_for_source(
     md_single_chapter: bool,
     max_chapter_chars: int,
     md_chapter_heading_level: int,
-    job_max_chars: int,
+    job_max_chars: int | None,
     max_chars: int,
     max_phoneme_chars: int,
+    max_part_minutes: float = DEFAULT_MAX_PART_MINUTES,
+    speed: float = DEFAULT_SPEED,
+    silence_ms: int = DEFAULT_SILENCE_MS,
 ) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
     from .scheduler_jobs import build_jobs
 
@@ -145,6 +149,7 @@ def build_jobs_for_source(
         job_max_chars=job_max_chars,
         max_chars=max_chars,
         max_phoneme_chars=max_phoneme_chars,
+        max_part_minutes=max_part_minutes, speed=speed, silence_ms=silence_ms,
     )
 
 

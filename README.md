@@ -174,28 +174,43 @@ text remains one logical section. A single navigation link does not hide later
 chapter headings, and an empty chapter anchor can introduce text in the next file.
 Inline emphasis stays inside its paragraph.
 
-Batch output defaults to audio parts of approximately 30 minutes, measured from
-actual generated audio (`--max-part-minutes 30`). Parts close at the end of an
-inference chunk after reaching the limit, so they can be slightly longer. Short
-chapters and the final part of a chapter remain shorter. Workers can process
-different chapters in parallel.
+Batch workers split long chapters ahead of rendering into tasks estimated to
+produce approximately 30 minutes of audio. The default `--job-max-chars auto`
+uses `--max-part-minutes` (30 by default), `--speed`, word count and estimated
+inter-chunk silence. Paragraph boundaries within 10% of the target are preferred;
+otherwise it uses sentence boundaries. Different workers can render different
+segments of the same chapter concurrently. CPU workers may also take these bounded
+automatic segments while GPU workers are busy, even above `--cpu-max-chars`.
+Parallelism still depends on having enough segments for the configured workers.
 
 ```bash
 bash scripts/start-batch.sh --input book.epub --gpu-workers 2 --cpu-workers 1
 ```
 
-Character-based task segmentation is disabled by default (`--job-max-chars 0`),
-so it does not prematurely close audio files. To opt into parallel processing of
-ranges within one chapter, set e.g. `--job-max-chars 12000`. This is a soft text-size
-target: splits prefer paragraphs, then sentences; overlong sentences stay whole
-and headings stay with the following text. Split chapters use ordered
-`-segment-0001` suffixes. Each task produces separate files, which can be shorter
-than 30 minutes and are not merged. Inference chunk limits (`--max-chars`,
-`--max-phoneme-chars`) remain independent of the audio part limit.
+The estimator is calibrated to 190 words/minute at speed 1, then scaled by
+`--speed` and estimated inter-chunk pauses. This replaces the previous 150 WPM
+assumption, which produced roughly 24-minute parts with `af_bella` at speed 0.9.
+The calibration comes from measured audiobook output; no extra configuration
+is needed. Other voices and text can still differ from the estimate.
 
-For an existing batch rendered with the previous 12000-character default, use
-`--job-max-chars 12000` to resume it, or a new `--output-dir` to render with the
-new duration-based default. `--fresh` does not change a saved segmentation plan.
+Automatic tasks use a 10% audio-limit tolerance (33 minutes for a 30-minute target);
+the renderer closes a part at the next inference-chunk end if that limit is reached.
+Short chapters and final parts can be shorter; they are not padded or merged.
+
+`--job-max-chars 12000` retains explicit character-based segmentation with the
+unmodified audio limit; `--job-max-chars 0` disables task segmentation and splits
+only by actual audio duration. Split chapters use standard names such as `04-01 - Title.mp3`,
+`04-02 - Title.mp3`. If an estimated part needs further duration splitting,
+its files use an additional numeric level, e.g. `04-01-01 - Title.mp3`,
+`04-01-02 - Title.mp3`, keeping them before `04-02 - Title.mp3`.
+Inference chunk limits (`--max-chars`, `--max-phoneme-chars`) remain separate.
+
+A saved automatic plan fingerprints the source, duration target, speed, pause
+settings, planning chunk size and calibrated rate. Changing these settings or
+switching task modes requires a new `--output-dir`; `--fresh` does not change the
+saved plan. Use a new output directory for books planned with the old 150 WPM
+estimate or legacy `-segment-0001` names. Older unsplit batches can still resume
+with `--job-max-chars 0`. Worker count can change without changing the plan.
 
 Interrupting a batch stops further task launches and retries before terminating
 workers. Workers have up to 10 seconds to finish a fragment and save progress;

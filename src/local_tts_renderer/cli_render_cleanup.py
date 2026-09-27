@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from collections.abc import Iterable, Sequence
 
+from .part_naming import split_numbered_title
 from .cli_audio_utils import build_temp_part_base_name, compute_part_output_paths
 from .cli_resume import ResumeCheckpointError, remove_exact_artifacts
 from .document_helpers import sanitize_filename_component
@@ -51,9 +52,9 @@ def _owned_stem(stem: str, final_stem_override: str) -> bool:
     # The writer preserves spaced hyphens in the first part and uses compact
     # hyphens in subsequent numbered parts. Accept exactly those two forms.
     for variant in (normalized, re.sub(r"\s*-\s*", "-", normalized).strip()):
-        chapter_match = re.match(r"^(\d+)\s*-\s*(.+)$", variant)
+        chapter_match = split_numbered_title(variant)
         if chapter_match:
-            chapter_number, title = chapter_match.groups()
+            chapter_number, title = chapter_match
             if re.fullmatch(rf"{re.escape(chapter_number)}-\d+ - {re.escape(title.strip())}", stem):
                 return True
         elif re.fullmatch(rf"\d+-{re.escape(variant)}", stem):
