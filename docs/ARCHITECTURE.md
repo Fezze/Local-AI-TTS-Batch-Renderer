@@ -119,7 +119,10 @@ should import from the owning module rather than a compatibility facade.
   [text_start, text_end) range of that chapter; it never invents a source chapter.
   Workers receive these offsets alongside the original chapter index and cache.
 - Batch task sizing is independent of inference chunks and audio duration limits.
-  The default 12000-character target prefers paragraphs, then sentence boundaries;
+  Character-based task segmentation is disabled by default (target 0), leaving
+  output splitting to the actual audio duration (30 minutes by default, closing
+  after a complete inference chunk). Chapter endings may produce shorter files.
+  Explicit positive character targets prefer paragraphs, then sentence boundaries;
   overlong sentences remain intact and headings stay with following text. All ranges
   concatenate exactly to the original chapter. Bounded segments are CPU-eligible
   while GPU workers are active.

@@ -6,7 +6,7 @@ import re
 from .scheduler_types import ChapterJob
 from .sources.model import SourceChapter
 
-DEFAULT_JOB_MAX_CHARS = 12000
+DEFAULT_JOB_MAX_CHARS = 0
 
 
 def natural_text_ranges(text: str, target: int) -> list[tuple[int, int]]:

@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--worker-mode", choices=["persistent", "subprocess"], default="persistent", help="Reuse a model session or start a process for each task.")
     parser.add_argument("--voice", default=DEFAULT_VOICE)
     parser.add_argument("--speed", type=float, default=DEFAULT_SPEED)
-    parser.add_argument("--job-max-chars", type=nonnegative_int, default=DEFAULT_JOB_MAX_CHARS, help="Target characters per worker task; split at paragraphs or sentences, never inside a sentence. 0 disables.")
+    parser.add_argument("--job-max-chars", type=nonnegative_int, default=DEFAULT_JOB_MAX_CHARS, help="Target characters per worker task; split at paragraphs or sentences, never inside a sentence. 0 disables (default); audio parts use --max-part-minutes.")
     parser.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
     parser.add_argument("--max-phoneme-chars", type=int, default=DEFAULT_MAX_PHONEME_CHARS, help="Secondary chunk size cap to avoid phoneme truncation.")
     parser.add_argument("--max-part-minutes", type=float, default=DEFAULT_MAX_PART_MINUTES)

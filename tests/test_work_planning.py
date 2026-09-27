@@ -115,3 +115,23 @@ def test_dots_in_chapter_titles_do_not_collapse_segment_paths():
     tasks=split_chapter_job(job,chapter,20,20)
     manifests=[Path(task.output_name).with_suffix('.json') for task in tasks]
     assert len(set(manifests))==len(tasks)==3
+
+
+def test_default_batch_keeps_long_chapter_and_uses_thirty_minute_parts(tmp_path, monkeypatch):
+    source = tmp_path / 'book.md'
+    source.write_text('# Chapter\n\n' + 'A complete sentence.\n\n' * 1500)
+    monkeypatch.setattr(sys, 'argv', ['batch', '--input', str(source)])
+    args = scheduler_args.parse_args()
+    assert args.job_max_chars == 0
+    jobs, skipped, caches = build_jobs([source], tmp_path / 'out', False)
+    assert not skipped and len(jobs) == 1
+    job = jobs[0]
+    assert job.estimated_chars > 24000
+    assert job.text_start == 0 and job.text_end is None
+    assert '-segment-' not in job.output_name
+    command = build_worker_command(Path(sys.executable), Path('unused'), args,
+                                   source, job, 450, caches[source])
+    monkeypatch.setattr(sys, 'argv', ['render', *command[4:]])
+    parsed = cli_runtime.parse_args()
+    assert parsed.max_part_minutes == 30
+    assert parsed.chapter_text_start == 0 and parsed.chapter_text_end is None

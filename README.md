@@ -174,21 +174,28 @@ text remains one logical section. A single navigation link does not hide later
 chapter headings, and an empty chapter anchor can introduce text in the next file.
 Inline emphasis stays inside its paragraph.
 
-Batch workers can process different ranges of the same logical chapter in parallel:
+Batch output defaults to audio parts of approximately 30 minutes, measured from
+actual generated audio (`--max-part-minutes 30`). Parts close at the end of an
+inference chunk after reaching the limit, so they can be slightly longer. Short
+chapters and the final part of a chapter remain shorter. Workers can process
+different chapters in parallel.
 
 ```bash
-bash scripts/start-batch.sh --input book.epub --gpu-workers 2 --cpu-workers 1 --job-max-chars 12000
+bash scripts/start-batch.sh --input book.epub --gpu-workers 2 --cpu-workers 1
 ```
 
-`--job-max-chars` defaults to 12000 and is a soft task-size target. Splits prefer
-paragraph endings; an oversized paragraph is split at sentence endings. A sentence
-longer than the target stays whole, and a chapter heading is kept with its first
-text segment. `--job-max-chars 0` disables task segmentation. Small chapters keep
-their existing output names; split chapters use ordered `-segment-0001` suffixes.
-These task boundaries are separate from the inference chunk limits (`--max-chars`,
-`--max-phoneme-chars`) and the audio part limit (`--max-part-minutes`, default 30).
-A task can produce several audio parts or finish with a shorter file; parts are not
-padded or merged to reach 30 minutes.
+Character-based task segmentation is disabled by default (`--job-max-chars 0`),
+so it does not prematurely close audio files. To opt into parallel processing of
+ranges within one chapter, set e.g. `--job-max-chars 12000`. This is a soft text-size
+target: splits prefer paragraphs, then sentences; overlong sentences stay whole
+and headings stay with the following text. Split chapters use ordered
+`-segment-0001` suffixes. Each task produces separate files, which can be shorter
+than 30 minutes and are not merged. Inference chunk limits (`--max-chars`,
+`--max-phoneme-chars`) remain independent of the audio part limit.
+
+For an existing batch rendered with the previous 12000-character default, use
+`--job-max-chars 12000` to resume it, or a new `--output-dir` to render with the
+new duration-based default. `--fresh` does not change a saved segmentation plan.
 
 Interrupting a batch stops further task launches and retries before terminating
 workers. Workers have up to 10 seconds to finish a fragment and save progress;
