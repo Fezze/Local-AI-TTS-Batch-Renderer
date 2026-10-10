@@ -38,6 +38,13 @@ class ChapterJob:
     attempt: int = 1
     preferred_provider: str | None = None
     fallback_locked: bool = False
+    render_max_chars: int | None = None
+    text_start: int = 0
+    text_end: int | None = None
+    segment_index: int = 1
+    segment_count: int = 1
+    document_snapshot: str | None = None
+    output_part_minutes: float | None = None
 
 
 @dataclass

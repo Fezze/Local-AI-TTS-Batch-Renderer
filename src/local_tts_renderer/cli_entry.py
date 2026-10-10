@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+import signal
 import sys
 import time
 from pathlib import Path
 
 from .cli_audio_utils import create_audio_with_retry, write_mp3_from_wav
 from .cli_cache import load_chapters_from_cache
+from .work_planning import select_chapter_text
+from .input_paths import expand_pattern, validate_source_outputs
 from .cli_models import PartialRunComplete
 from .cli_presentation import print_chapter_summary, print_output_structure_preview, print_toc_tree
 from .cli_models import AudioMetadata
-from .cli_render_flow import render_audio
+from .cli_render_flow import render_audio, request_termination
 from .cli_runtime import (
     configure_onnx_provider,
     configure_runtime_temp_dir,
@@ -33,10 +36,14 @@ from .sources import MarkdownIngestOptions, SourceDocument, SourceLoadOptions, l
 from .sources.model import SourceChapter
 
 
+def _interrupt_on_termination(_signum: int, _frame: object) -> None:
+    request_termination()
+
+
 def expand_inputs(paths: list[str]) -> list[Path]:
     expanded: list[Path] = []
     for item in paths:
-        matches = [Path(p) for p in sorted(Path().glob(item))] if any(ch in item for ch in "*?[]") else [Path(item)]
+        matches = expand_pattern(item)
         expanded.extend(matches)
     unique: list[Path] = []
     seen: set[Path] = set()
@@ -84,8 +91,52 @@ def _group_directory_map_for_source(document: SourceDocument) -> dict[str, Path]
     return build_group_directory_map(document.chapters)
 
 
-def main() -> int:
-    args = parse_args()
+def initialize_session(args, output_dir):
+    initialized_at = time.monotonic()
+    runtime_temp_dir = configure_runtime_temp_dir(output_dir=output_dir, temp_dir=args.temp_dir)
+    enable_windows_espeak_fallback()
+    model_dir = Path(args.model_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_path, voices_path = ensure_model_files(model_dir)
+    model_identity = {
+        "model": {"name": model_path.name, "size": model_path.stat().st_size},
+        "voices": {"name": voices_path.name, "size": voices_path.stat().st_size},
+    }
+    provider_priority = parse_provider_priority(args.providers)
+    provider = configure_onnx_provider(provider_priority=provider_priority)
+    ort = get_onnxruntime()
+    print(json.dumps({"onnx_provider_preference": provider, "available_providers": ort.get_available_providers(), "runtime_temp_dir": str(runtime_temp_dir)}), flush=True)
+    KokoroClass = get_kokoro_class()
+    print("[run:bootstrap] creating kokoro session...", flush=True)
+    kokoro = KokoroClass(str(model_path), str(voices_path))
+    if getattr(args, "_persistent_worker", False):
+        from .worker_tokenizer import reuse_phonemizer
+        reuse_phonemizer(kokoro)
+    print(json.dumps({"session_providers": kokoro.sess.get_providers()}), flush=True)
+    if args.warmup_text and args.warmup_text.strip():
+        print("[run:warmup] start", flush=True)
+        warmup_start = time.time()
+        try:
+            create_audio_with_retry(
+                kokoro=kokoro,
+                text=args.warmup_text.strip(),
+                voice=args.voice,
+                speed=args.speed,
+                lang=args.lang,
+                trim_mode=args.trim_mode,
+            )
+            print(f"[run:warmup] done elapsed={time.time() - warmup_start:.2f}s", flush=True)
+        except Exception as exc:
+            print(f"[run:warmup] failed error={exc}", flush=True)
+
+    print(json.dumps({"event": "session_metrics", "initialization_seconds": time.monotonic() - initialized_at}), flush=True)
+    return kokoro, model_identity
+
+
+def main(args=None, *, runtime=None, source_document=None) -> int:
+    if runtime is None and hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _interrupt_on_termination)
+    args = parse_args() if args is None else args
     md_single_chapter = getattr(args, "md_single_chapter", False)
     max_chapter_chars = getattr(args, "max_chapter_chars", 0)
     md_chapter_heading_level = getattr(args, "md_chapter_heading_level", 0)
@@ -110,6 +161,11 @@ def main() -> int:
         print("--input is required.", file=sys.stderr)
         return 2
 
+    text_start = getattr(args, "chapter_text_start", 0)
+    text_end = getattr(args, "chapter_text_end", None)
+    if (text_start or text_end is not None) and (args.chapter_index is None or text_end is None or text_start < 0 or text_end <= text_start):
+        print("Chapter text ranges require --chapter-index and valid start/end offsets.", file=sys.stderr)
+        return 2
     inputs = expand_inputs(args.input)
     if not inputs:
         print("No input files found.", file=sys.stderr)
@@ -132,6 +188,12 @@ def main() -> int:
             print_output_structure_preview(source_path, chapters)
         return 0
 
+    try:
+        validate_source_outputs(inputs, args.output_subdir)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
     output_dir = Path(args.output_dir).resolve()
     print(f"[run:init] inputs={len(inputs)} output_dir={output_dir} model_dir={Path(args.model_dir).resolve()}", flush=True)
     print(
@@ -140,38 +202,14 @@ def main() -> int:
         f"trim_mode={args.trim_mode} mp3_only={args.mp3_only} force={args.force}",
         flush=True,
     )
-    runtime_temp_dir = configure_runtime_temp_dir(output_dir=output_dir, temp_dir=args.temp_dir)
-    enable_windows_espeak_fallback()
-    model_dir = Path(args.model_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    model_path, voices_path = ensure_model_files(model_dir)
-    provider_priority = parse_provider_priority(args.providers)
-    provider = configure_onnx_provider(provider_priority=provider_priority)
-    ort = get_onnxruntime()
-    print(json.dumps({"onnx_provider_preference": provider, "available_providers": ort.get_available_providers(), "runtime_temp_dir": str(runtime_temp_dir)}), flush=True)
-    KokoroClass = get_kokoro_class()
-    print("[run:bootstrap] creating kokoro session...", flush=True)
-    kokoro = KokoroClass(str(model_path), str(voices_path))
-    print(json.dumps({"session_providers": kokoro.sess.get_providers()}), flush=True)
-    if args.warmup_text and args.warmup_text.strip():
-        print("[run:warmup] start", flush=True)
-        warmup_start = time.time()
-        try:
-            create_audio_with_retry(
-                kokoro=kokoro,
-                text=args.warmup_text.strip(),
-                voice=args.voice,
-                speed=args.speed,
-                lang=args.lang,
-                trim_mode=args.trim_mode,
-            )
-            print(f"[run:warmup] done elapsed={time.time() - warmup_start:.2f}s", flush=True)
-        except Exception as exc:
-            print(f"[run:warmup] failed error={exc}", flush=True)
+    kokoro, model_identity = runtime if runtime is not None else initialize_session(args, output_dir)
 
     for source_path in inputs:
-        document = _load_document_for_source(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
-        if args.chapter_cache and args.chapter_index is not None:
+        prepared_at = time.monotonic()
+        document = source_document or _load_document_for_source(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
+        if source_document is not None:
+            chapters = document.chapters
+        elif args.chapter_cache and args.chapter_index is not None:
             cache_path = Path(args.chapter_cache).resolve()
             if cache_path.exists():
                 chapters = load_chapters_from_cache(cache_path)
@@ -187,6 +225,7 @@ def main() -> int:
 
         if chapters is not document.chapters:
             document = SourceDocument(path=document.path, metadata=document.metadata, chapters=chapters, navigation=document.navigation)
+        print(json.dumps({"event": "document_metrics", "preparation_seconds": time.monotonic() - prepared_at}), flush=True)
         audio_metadata = _audio_metadata_from_source(document)
         group_dir_map = _group_directory_map_for_source(document)
 
@@ -196,6 +235,12 @@ def main() -> int:
                 print(f"Invalid --chapter-index {args.chapter_index} for {source_path}.", file=sys.stderr)
                 return 2
             original_chapter = chapters[args.chapter_index - 1]
+            if text_end is not None:
+                try:
+                    original_chapter = select_chapter_text(original_chapter, text_start, text_end)
+                except ValueError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
             chapter_group = original_chapter.group
             chapter_position = args.chapter_index if document.navigation else build_chapter_number_map(chapters)[args.chapter_index]
             chapter_title = original_chapter.title
@@ -230,6 +275,8 @@ def main() -> int:
                     heartbeat_seconds=args.heartbeat_seconds,
                     final_stem_override=output_name,
                     max_parts_per_run=args.max_parts_per_run,
+                    fresh=getattr(args, "fresh", False),
+                    model_identity=model_identity,
                 )
             except PartialRunComplete:
                 return 75
@@ -258,6 +305,8 @@ def main() -> int:
                 audio_metadata=audio_metadata,
                 heartbeat_seconds=args.heartbeat_seconds,
                 max_parts_per_run=args.max_parts_per_run,
+                fresh=getattr(args, "fresh", False),
+                model_identity=model_identity,
             )
         except PartialRunComplete:
             return 75

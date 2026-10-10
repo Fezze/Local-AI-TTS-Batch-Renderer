@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import io
 import shutil
+import tempfile
 import types
 import uuid
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from local_tts_renderer import cli_audio_utils, cli_chunking_utils, cli_render_flow, cli_runtime, document_helpers
+from local_tts_renderer import (
+    cli_audio_utils,
+    cli_chunking_utils,
+    cli_part_writer,
+    cli_render_flow,
+    cli_runtime,
+    document_helpers,
+)
 from local_tts_renderer.cli_models import AudioMetadata
 from local_tts_renderer.sources import markdown
 
@@ -144,6 +153,7 @@ def test_output_path_helpers_and_gate() -> None:
 
 def test_runtime_temp_and_file_helpers() -> None:
     tmp = _mk_tmp_dir()
+    previous_tempdir = tempfile.tempdir
     try:
         rt = cli.configure_runtime_temp_dir(output_dir=tmp, temp_dir=str(tmp / "runtime"))
         assert rt.exists()
@@ -154,6 +164,7 @@ def test_runtime_temp_and_file_helpers() -> None:
         assert not p.exists()
         assert cli.safe_remove_path(p)
     finally:
+        tempfile.tempdir = previous_tempdir
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -179,7 +190,7 @@ def test_mp3_write_from_audio_and_wav() -> None:
 def test_output_part_writer_close(monkeypatch) -> None:
     tmp = _mk_tmp_dir()
     try:
-        monkeypatch.setattr(cli_render_flow, "write_mp3_tags", lambda *a, **k: None)
+        monkeypatch.setattr(cli_part_writer, "write_mp3_tags", lambda *a, **k: None)
         writer = cli.OutputPartWriter(
             output_root=tmp / "book" / "04-Neutral Chapter",
             base_output_dir=tmp,
@@ -206,7 +217,7 @@ def test_output_part_writer_close(monkeypatch) -> None:
 def test_output_part_writer_fails_fast_when_output_exists(monkeypatch) -> None:
     tmp = _mk_tmp_dir()
     try:
-        monkeypatch.setattr(cli_render_flow, "write_mp3_tags", lambda *a, **k: None)
+        monkeypatch.setattr(cli_part_writer, "write_mp3_tags", lambda *a, **k: None)
         out_root = tmp / "book" / "04-Neutral Chapter"
         _, mp3_path = cli.compute_part_output_paths(
             output_root=out_root,
@@ -220,7 +231,7 @@ def test_output_part_writer_fails_fast_when_output_exists(monkeypatch) -> None:
         mp3_path.parent.mkdir(parents=True, exist_ok=True)
         mp3_path.write_bytes(b"existing")
         calls: list[Path] = []
-        monkeypatch.setattr(cli_render_flow, "safe_remove_path", lambda path: calls.append(path) or True)
+        monkeypatch.setattr(cli_part_writer, "safe_remove_path", lambda path: calls.append(path) or True)
         try:
             cli.OutputPartWriter(
                 output_root=out_root,
@@ -238,6 +249,38 @@ def test_output_part_writer_fails_fast_when_output_exists(monkeypatch) -> None:
         except FileExistsError:
             pass
         assert calls == []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_output_part_writer_does_not_replace_final_part_without_force(monkeypatch) -> None:
+    tmp = _mk_tmp_dir()
+    try:
+        monkeypatch.setattr(cli_part_writer, "write_mp3_tags", lambda *a, **k: None)
+        final_mp3 = tmp / "mp3" / "book" / "04-02 - Section Alpha.mp3"
+        final_mp3.parent.mkdir(parents=True, exist_ok=True)
+        final_mp3.write_bytes(b"existing-final")
+        writer = cli.OutputPartWriter(
+            output_root=tmp / "book",
+            base_output_dir=tmp,
+            part_index=2,
+            multi_part=False,
+            sample_rate=24000,
+            force=False,
+            group_name=None,
+            audio_metadata=None,
+            mp3_only=True,
+            final_stem_override="04-Section Alpha",
+        )
+        writer.chapter_titles = ["Section Alpha"]
+        writer.start_chunk = 2
+        writer.end_chunk = 2
+        writer.write_audio(np.zeros(200, dtype=np.float32))
+
+        with pytest.raises(FileExistsError, match="Use --force"):
+            writer.close()
+
+        assert final_mp3.read_bytes() == b"existing-final"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

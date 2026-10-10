@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
+from itertools import repeat
 import json
+import multiprocessing
 import os
 import re
 import shutil
@@ -15,14 +18,25 @@ from .document_helpers import (
     sanitize_filename_component,
     slugify,
 )
-from .sources import MarkdownIngestOptions, SourceDocument, SourceLoadOptions, load_source
+from .cli_render_cleanup import read_untrusted_resume_state, reset_render_artifacts
+from .sources import SourceChapter, SourceDocument
 
 from .defaults import (
     DEFAULT_CPU_MAX_CHARS,
+    DEFAULT_MAX_PART_MINUTES,
+    DEFAULT_SPEED,
+    DEFAULT_SILENCE_MS,
     DEFAULT_GPU_LARGE_CHAPTER_ESTIMATED_CHUNKS,
     DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS,
 )
 from .scheduler_logging import debug_log
+from .worker_snapshot import save_snapshot
+from .scheduler_completion import CompletionCache, is_job_complete
+from .scheduler_scan import build_jobs_for_source, load_document_for_jobs
+from .input_paths import source_cache_key, validate_source_outputs
+from .work_planning import DEFAULT_JOB_MAX_CHARS, split_chapter_job, select_chapter_text
+from .duration_planning import duration_plan_settings, duration_text_ranges
+from .work_plan_state import preserve_work_plan
 from .scheduler_types import (
     CPU_IDLE_STEP_SECONDS,
     DEFAULT_MAX_CHARS,
@@ -31,24 +45,6 @@ from .scheduler_types import (
     WorkerConfig,
     WorkerStatus,
 )
-
-
-def _load_document_for_jobs(
-    source_path: Path,
-    md_single_chapter: bool,
-    max_chapter_chars: int,
-    md_chapter_heading_level: int,
-) -> SourceDocument:
-    return load_source(
-        source_path,
-        SourceLoadOptions(
-            markdown=MarkdownIngestOptions(
-                single_chapter=md_single_chapter,
-                max_chapter_chars=max_chapter_chars,
-                chapter_heading_level=md_chapter_heading_level,
-            )
-        ),
-    )
 
 
 def cpu_allowed_chunk_budget(statuses: dict[str, WorkerStatus], worker_name: str) -> int:
@@ -60,43 +56,25 @@ def cpu_allowed_chunk_budget(statuses: dict[str, WorkerStatus], worker_name: str
     return max(1, 1 + int(idle_seconds // CPU_IDLE_STEP_SECONDS))
 
 
-def is_job_complete(output_dir: Path, job: ChapterJob) -> bool:
-    candidate_manifest_paths = [
-        (output_dir / job.output_subdir / job.output_name).with_suffix(".json"),
-        (output_dir / job.output_subdir).with_suffix(".json"),
-    ]
-    manifest = None
-    for manifest_path in candidate_manifest_paths:
-        if not manifest_path.exists():
-            continue
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            break
-        except Exception:
-            continue
-    if manifest is None:
-        return False
+def reset_job_for_fresh_run(output_dir: Path, job: ChapterJob) -> tuple[Path, ...]:
+    output_root = output_dir / job.output_subdir
+    manifest_root = output_root / job.output_name
+    return reset_render_artifacts(
+        base_output_dir=output_dir,
+        output_root=output_root,
+        manifest_path=manifest_root.with_suffix(".json"),
+        checkpoint_path=manifest_root.with_suffix(".resume.json"),
+        chunk_dir=manifest_root.parent / f"{manifest_root.name}-chunks",
+        final_stem_override=job.output_name,
+        include_manifest=True,
+    )
 
-    parts = manifest.get("parts")
-    if not isinstance(parts, list) or not parts:
-        return False
 
-    for part in parts:
-        wav_path = part.get("wav_path")
-        mp3_path = part.get("mp3_path")
-        if not mp3_path:
-            return False
-        mp3_file = Path(mp3_path)
-        if not mp3_file.exists():
-            return False
-        if mp3_file.stat().st_size == 0:
-            return False
-        if wav_path:
-            wav_file = Path(wav_path)
-            if not wav_file.exists() or wav_file.stat().st_size == 0:
-                return False
-
-    return True
+def _load_pinned_render_max_chars(output_dir: Path, job: ChapterJob) -> int | None:
+    checkpoint_path = (output_dir / job.output_subdir / job.output_name).with_suffix(".resume.json")
+    state = read_untrusted_resume_state(checkpoint_path)
+    value = state.get("render_max_chars") if state else None
+    return value if type(value) is int and value > 0 else None
 
 
 def build_jobs(
@@ -105,27 +83,88 @@ def build_jobs(
     fresh: bool,
     debug: bool = False,
     *,
+    force: bool = False,
     md_single_chapter: bool = False,
     max_chapter_chars: int = 0,
     md_chapter_heading_level: int = 0,
+    job_max_chars: int | None = DEFAULT_JOB_MAX_CHARS,
+    max_part_minutes: float = DEFAULT_MAX_PART_MINUTES,
+    speed: float = DEFAULT_SPEED,
+    silence_ms: int = DEFAULT_SILENCE_MS,
     max_chars: int = DEFAULT_MAX_CHARS,
     max_phoneme_chars: int = 0,
 ) -> tuple[list[ChapterJob], list[ChapterJob], dict[Path, Path]]:
+    effective_max_chars = min(max_chars, max_phoneme_chars) if max_phoneme_chars > 0 else max_chars
+    duration_settings = (duration_plan_settings(max_part_minutes, speed, silence_ms, effective_max_chars)
+                         if job_max_chars is None else None)
+    validate_source_outputs(inputs)
+    scan_workers = min(os.cpu_count() or 1, len(inputs))
+    if scan_workers > 1:
+        with ProcessPoolExecutor(
+            max_workers=scan_workers,
+            mp_context=multiprocessing.get_context("spawn"),
+        ) as executor:
+            source_results = executor.map(
+                build_jobs_for_source,
+                inputs,
+                repeat(output_dir),
+                repeat(fresh),
+                repeat(debug),
+                repeat(force),
+                repeat(md_single_chapter),
+                repeat(max_chapter_chars),
+                repeat(md_chapter_heading_level),
+                repeat(job_max_chars),
+                repeat(max_chars),
+                repeat(max_phoneme_chars),
+                repeat(max_part_minutes), repeat(speed), repeat(silence_ms),
+            )
+            results = list(source_results)
+        jobs = [job for source_jobs, _, _ in results for job in source_jobs]
+        skipped = [job for _, source_skipped, _ in results for job in source_skipped]
+        chapter_cache_map = {
+            source_path: cache_path
+            for _, _, source_cache_map in results
+            for source_path, cache_path in source_cache_map.items()
+        }
+        return jobs, skipped, chapter_cache_map
+
     jobs: list[ChapterJob] = []
     skipped: list[ChapterJob] = []
     chapter_cache_map: dict[Path, Path] = {}
     cache_root = output_dir / ".cache" / "chapter-index"
     cache_root.mkdir(parents=True, exist_ok=True)
+    scan_cache_root = output_dir / ".cache" / "source-scan"
+    scan_cache_root.mkdir(parents=True, exist_ok=True)
+    scan_started_at = {source_path: time.time() for source_path in inputs}
     for source_path in inputs:
-        source_started = time.time()
         print(f"[batch:scan] source_start path={source_path}", flush=True)
-        chapters_load_started = time.time()
-        document = _load_document_for_jobs(source_path, md_single_chapter, max_chapter_chars, md_chapter_heading_level)
+    documents = {
+        source_path: load_document_for_jobs(
+            source_path,
+            scan_cache_root,
+            md_single_chapter,
+            max_chapter_chars,
+            md_chapter_heading_level,
+        )
+        for source_path in inputs
+    }
+    for source_path in inputs:
+        source_started = scan_started_at[source_path]
+        document, cache_hit = documents[source_path]
+        if cache_hit:
+            print(
+                f"[batch:scan] source_cached path={source_path} chapters={len(document.chapters)} "
+                f"elapsed={time.time() - source_started:.1f}s",
+                flush=True,
+            )
         source_chapters = document.chapters
         chapters = [chapter for chapter in source_chapters if chapter.text and chapter.text.strip()]
         if chapters is not document.chapters:
             document = SourceDocument(path=document.path, metadata=document.metadata, chapters=chapters, navigation=document.navigation)
-        cache_key = re_slug(str(source_path))
+        preserve_work_plan(output_dir, source_path, chapters, job_max_chars, duration_settings=duration_settings)
+        snapshot = save_snapshot(output_dir, document)
+        cache_key = source_cache_key(source_path)
         cache_path = cache_root / f"{cache_key}.json"
         cache_payload = [
             {"title": chapter.title, "text": chapter.text, "group": chapter.group}
@@ -133,21 +172,23 @@ def build_jobs(
         ]
         cache_path.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
         chapter_cache_map[source_path] = cache_path
-        print(
-            f"[batch:scan] chapters_loaded path={source_path} chapters={len(chapters)} "
-            f"elapsed={time.time() - chapters_load_started:.1f}s",
-            flush=True,
-        )
+        if not cache_hit:
+            print(
+                f"[batch:scan] chapters_loaded path={source_path} chapters={len(chapters)} "
+                f"elapsed={time.time() - source_started:.1f}s",
+                flush=True,
+            )
         group_dir_map = build_group_directory_map(document.chapters)
         root_title_index_map: dict[str, int] = {}
         used_output_names: dict[str, set[str]] = {}
         if document.navigation:
             toc_started = time.time()
-            print(
-                f"[batch:scan] navigation_loaded path={source_path} nodes={len(document.navigation)} "
-                f"elapsed={time.time() - toc_started:.1f}s",
-                flush=True,
-            )
+            if not cache_hit:
+                print(
+                    f"[batch:scan] navigation_loaded path={source_path} nodes={len(document.navigation)} "
+                    f"elapsed={time.time() - toc_started:.1f}s",
+                    flush=True,
+                )
             group_dir_map = build_group_directory_map_from_navigation(
                 document.navigation,
                 {chapter.group for chapter in chapters if chapter.group},
@@ -159,6 +200,7 @@ def build_jobs(
         root_slot_counter = 0
         source_jobs_before = len(jobs)
         source_skipped_before = len(skipped)
+        completion_cache: CompletionCache = {}
         for chapter_index, chapter in enumerate(chapters, start=1):
             title_component = sanitize_filename_component(chapter.title)
             output_subdir = Path(source_slug)
@@ -189,19 +231,48 @@ def build_jobs(
             estimated_chunks = max(1, (len(chapter.text) + effective_max_chars - 1) // effective_max_chars)
             job = ChapterJob(
                 source_path=source_path,
+                document_snapshot=str(snapshot),
                 chapter_index=chapter_index,
                 chapter_title=chapter.title,
                 output_subdir=str(output_subdir),
                 output_name=output_name,
                 estimated_chars=len(chapter.text),
                 estimated_chunks=estimated_chunks,
+                output_part_minutes=(max_part_minutes * (1 + duration_settings['tolerance'])
+                                     if duration_settings else None),
             )
-            if not fresh and is_job_complete(output_dir, job):
+            complete = is_job_complete(
+                output_dir,
+                job,
+                expected_chapter=chapter,
+                expected_document_chapters=chapters,
+                completion_cache=completion_cache,
+            )
+            if not force and complete:
                 skipped.append(job)
             else:
-                jobs.append(job)
+                # Keep an existing unsplit checkpoint resumable under its original identity.
+                checkpoint = (output_dir / job.output_subdir / job.output_name).with_suffix(".resume.json")
+                ranges = duration_text_ranges(chapter.text, duration_settings) if duration_settings else None
+                tasks = [job] if checkpoint.exists() else split_chapter_job(
+                    job, chapter, job_max_chars or 0, effective_max_chars, ranges=ranges)
+                for task in tasks:
+                    selected = select_chapter_text(chapter, task.text_start, task.text_end)
+                    task_complete = complete if task is job else is_job_complete(
+                        output_dir,
+                        task,
+                        selected,
+                        chapters,
+                        completion_cache,
+                    )
+                    if task_complete and not force:
+                        skipped.append(task)
+                        continue
+                    if not fresh and not task_complete:
+                        task.render_max_chars = _load_pinned_render_max_chars(output_dir, task)
+                    jobs.append(task)
         print(
-            f"[batch:scan] source_done path={source_path} "
+            f"[batch:plan] source_done path={source_path} "
             f"queued={len(jobs) - source_jobs_before} skipped={len(skipped) - source_skipped_before} "
             f"elapsed={time.time() - source_started:.1f}s",
             flush=True,
@@ -229,6 +300,14 @@ def choose_worker_max_chars(worker: WorkerConfig, job: ChapterJob, args: argpars
     return max(DEFAULT_GPU_LARGE_CHAPTER_MIN_CHARS, int(base * retry_shrink))
 
 
+def resolve_job_max_chars(worker: WorkerConfig, job: ChapterJob, args: argparse.Namespace) -> int:
+    """Keep chunk boundaries stable for partial continuation and retries."""
+
+    if job.render_max_chars is None:
+        job.render_max_chars = choose_worker_max_chars(worker, job, args)
+    return job.render_max_chars
+
+
 def build_worker_command(
     python_exe: Path,
     script_path: Path,
@@ -238,10 +317,12 @@ def build_worker_command(
     worker_max_chars: int,
     cache_path: Path | None,
 ) -> list[str]:
+    """Build a module invocation; script_path remains accepted for compatibility."""
     command = [
         str(python_exe),
         "-u",
-        str(script_path),
+        "-m",
+        "local_tts_renderer.cli",
         "--input",
         str(source_path),
         "--chapter-index",
@@ -259,7 +340,7 @@ def build_worker_command(
         "--max-chars",
         str(worker_max_chars),
         "--max-part-minutes",
-        str(args.max_part_minutes),
+        str(job.output_part_minutes if job.output_part_minutes is not None else args.max_part_minutes),
         "--model-dir",
         str(Path(args.model_dir).resolve()),
         "--silence-ms",
@@ -279,14 +360,15 @@ def build_worker_command(
         command.extend(["--md-chapter-heading-level", str(args.md_chapter_heading_level)])
     if getattr(args, "max_chapter_chars", 0) > 0:
         command.extend(["--max-chapter-chars", str(args.max_chapter_chars)])
+    if job.text_end is not None:
+        command.extend(["--chapter-text-start", str(job.text_start), "--chapter-text-end", str(job.text_end)])
     if cache_path is not None:
         command.extend(["--chapter-cache", str(cache_path)])
     if args.force:
         command.append("--force")
     if args.keep_chunks:
         command.append("--keep-chunks")
-    if args.mp3_only:
-        command.append("--mp3-only")
+    command.append("--mp3-only" if args.mp3_only else "--no-mp3-only")
     if args.max_parts_per_run > 0:
         command.extend(["--max-parts-per-run", str(args.max_parts_per_run)])
     return command
@@ -319,7 +401,8 @@ def select_next_job(
             (index, job)
             for index, job in enumerate(pending_jobs)
             if job.preferred_provider in (None, "CPUExecutionProvider")
-            and (is_short_section_title(job.chapter_title) or (job.estimated_chars <= cpu_max_chars and job.estimated_chunks <= allowed_chunks))
+            and (is_short_section_title(job.chapter_title) or (job.segment_count > 1 and (job.output_part_minutes is not None or job.estimated_chars <= cpu_max_chars))
+                 or (job.estimated_chars <= cpu_max_chars and job.estimated_chunks <= allowed_chunks))
         ]
         if eligible:
             return min(eligible, key=lambda item: job_key(item[1]))[0]

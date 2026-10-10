@@ -1,2 +1,5 @@
-﻿pytest>=8.2
+pytest>=8.2
 pytest-cov>=7.0
+setuptools>=64
+wheel
+pip

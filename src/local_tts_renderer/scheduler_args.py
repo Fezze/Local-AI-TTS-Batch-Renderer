@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from .sources import supported_suffixes
+from .input_paths import expand_pattern
+from .work_planning import DEFAULT_JOB_MAX_CHARS
 from .defaults import (
     DEFAULT_BOOTSTRAP_SILENCE_TIMEOUT_SECONDS,
     DEFAULT_AGGRESSIVE_GPU_RECOVERY,
@@ -39,20 +42,45 @@ from .defaults import (
     DEFAULT_WARMUP_TEXT,
     DEFAULT_WORKER_SILENCE_TIMEOUT_SECONDS,
 )
+def nonnegative_int(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("value must be nonnegative")
+    return number
+
+
+def job_size(value: str) -> int | None:
+    return None if value.lower() == 'auto' else nonnegative_int(value)
+
+
+def nonnegative_seconds(value: str) -> float:
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError("timeout must be finite and nonnegative")
+    return seconds
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local TTS jobs with 2 GPU workers and 1 CPU worker.")
     parser.add_argument("--input", nargs="+", required=True, help="Input files, directories, or glob patterns.")
     parser.add_argument("--output-dir", "--out", dest="output_dir", default=DEFAULT_OUTPUT_DIR, help="Directory for generated output.")
+    parser.add_argument("--worker-mode", choices=["persistent", "subprocess"], default="persistent", help="Reuse a model session or start a process for each task.")
     parser.add_argument("--voice", default=DEFAULT_VOICE)
     parser.add_argument("--speed", type=float, default=DEFAULT_SPEED)
+    parser.add_argument("--job-max-chars", type=job_size, default=DEFAULT_JOB_MAX_CHARS, help="auto (default) estimates tasks from --max-part-minutes and --speed; positive integers use characters; 0 disables task splitting.")
     parser.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
     parser.add_argument("--max-phoneme-chars", type=int, default=DEFAULT_MAX_PHONEME_CHARS, help="Secondary chunk size cap to avoid phoneme truncation.")
-    parser.add_argument("--max-part-minutes", type=float, default=DEFAULT_MAX_PART_MINUTES)
+    parser.add_argument("--max-part-minutes", type=float, default=DEFAULT_MAX_PART_MINUTES, help="Audio duration target; auto tasks allow 10%% tolerance, explicit character modes use this limit directly.")
     parser.add_argument("--model-dir", default="models")
     parser.add_argument("--silence-ms", type=int, default=DEFAULT_SILENCE_MS)
     parser.add_argument("--force", action="store_true", default=DEFAULT_FORCE)
     parser.add_argument("--keep-chunks", action="store_true", default=DEFAULT_KEEP_CHUNKS)
-    parser.add_argument("--fresh", action="store_true", default=DEFAULT_FRESH, help="Delete existing resume checkpoint for each input before starting.")
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        default=DEFAULT_FRESH,
+        help="Discard checkpoints and partial artifacts for unfinished jobs; completed jobs remain skipped unless --force is set.",
+    )
     parser.add_argument("--md-single-chapter", action="store_true", default=DEFAULT_MD_SINGLE_CHAPTER, help="Treat Markdown input as one chapter instead of splitting on headings.")
     parser.add_argument(
         "--md-chapter-heading-level",
@@ -64,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-chapter-chars", type=int, default=DEFAULT_MAX_CHAPTER_CHARS, help="Maximum character count per Markdown chapter. 0 disables extra splitting.")
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="Retry failed chapter jobs this many times.")
-    parser.add_argument("--cpu-max-chars", type=int, default=DEFAULT_CPU_MAX_CHARS, help="CPU worker only takes jobs up to this estimated text size while GPUs are available.")
+    parser.add_argument("--cpu-max-chars", type=int, default=DEFAULT_CPU_MAX_CHARS, help="CPU character budget while GPUs are active; automatic duration segments and short sections are also eligible.")
     parser.add_argument("--cpu-worker-max-chars", type=int, default=DEFAULT_CPU_WORKER_MAX_CHARS, help="Chunk size used by CPU worker jobs.")
     parser.add_argument("--gpu-large-chapter-max-chars", type=int, default=DEFAULT_GPU_LARGE_CHAPTER_MAX_CHARS, help="Chunk size used for larger chapters on GPU.")
     parser.add_argument("--gpu-small-chapter-max-chars", type=int, default=DEFAULT_GPU_SMALL_CHAPTER_MAX_CHARS, help="Chunk size used for smaller chapters on GPU.")
@@ -76,6 +104,7 @@ def parse_args() -> argparse.Namespace:
         help="Write only MP3 files from batch workers.",
     )
     parser.add_argument("--heartbeat-seconds", type=float, default=DEFAULT_HEARTBEAT_SECONDS, help="Worker heartbeat interval.")
+    parser.add_argument("--worker-progress-timeout-seconds", type=nonnegative_seconds, default=0.0, help="Retry after this many seconds without chunk progress during rendering; 0 disables.")
     parser.add_argument("--worker-silence-timeout-seconds", type=float, default=DEFAULT_WORKER_SILENCE_TIMEOUT_SECONDS, help="Kill and retry a worker process if it produces no output for too long.")
     parser.add_argument(
         "--bootstrap-silence-timeout-seconds",
@@ -90,7 +119,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-text", default=DEFAULT_WARMUP_TEXT, help="Short warmup text passed to worker runtime initialization.")
     parser.add_argument("--gpu-recovery-seconds", type=float, default=DEFAULT_GPU_RECOVERY_SECONDS, help="Cooldown for GPU worker after CUDA/timeout failure to let VRAM recover.")
     parser.add_argument("--aggressive-gpu-recovery", action="store_true", default=DEFAULT_AGGRESSIVE_GPU_RECOVERY, help="Stronger GPU recovery strategy after CUDA/timeout failures.")
-    parser.add_argument("--max-parts-per-run", type=int, default=DEFAULT_MAX_PARTS_PER_RUN, help="Optional: restart worker process after closing N parts (0 disables).")
+    parser.add_argument("--max-parts-per-run", type=int, default=DEFAULT_MAX_PARTS_PER_RUN, help="Stop a task after N parts and continue from its checkpoint (0 disables).")
     parser.add_argument("--no-console-controls", action="store_true", default=DEFAULT_NO_CONSOLE_CONTROLS, help="Disable keyboard controls (pause/restart) during batch run.")
     parser.add_argument("--debug", action="store_true", default=DEFAULT_DEBUG, help="Enable verbose batch debug logs.")
     parser.add_argument(
@@ -117,7 +146,7 @@ def expand_inputs(items: list[str]) -> list[Path]:
         if item_path.exists() and item_path.is_dir():
             expanded.extend(sorted(path for path in item_path.iterdir() if path.is_file() and path.suffix.lower() in source_suffixes))
         elif any(ch in item for ch in "*?[]"):
-            expanded.extend(sorted(Path().glob(item)))
+            expanded.extend(expand_pattern(item))
         else:
             expanded.append(item_path)
     unique: list[Path] = []

@@ -26,14 +26,14 @@
       "heading": "Part One",
       "chapter": "Part One",
       "chars": 5,
-      "text": "One\nA"
+      "text": "One A"
     },
     {
       "index": 2,
       "heading": "Part Two",
       "chapter": "Part Two",
       "chars": 5,
-      "text": "Two\nB"
+      "text": "Two B"
     }
   ]
 }
